@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <StartupObject>TinyAgent.Checks.Program</StartupObject>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../tiny_agent.cs" Link="TinyAgentCli.cs" />
+    <ProjectReference Include="../../src/TinyAgent/TinyAgent.csproj" />
+    <ProjectReference Include="../../src/TinyAgent.Http/TinyAgent.Http.csproj" />
+    <None Include="../../../../conformance/providers/*.sse" Link="fixtures/%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../../../conformance/rpc_v1.json" Link="fixtures/rpc_v1.json"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../../../conformance/tool_arguments.json" Link="fixtures/tool_arguments.json"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

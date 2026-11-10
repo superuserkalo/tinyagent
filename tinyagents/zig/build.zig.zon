@@ -1,0 +1,11 @@
+.{
+    .name = .tiny_agent_sdk,
+    .version = "0.0.1",
+    .fingerprint = 0xcf313326b3ccabc9, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",                "build.zig.zon",            "tiny_agent.zig",           "src", "test", "examples", "README.md", "LICENSE",
+        "schema-native/Cargo.toml", "schema-native/Cargo.lock", "schema-native/src/lib.rs",
+    },
+}

@@ -1,0 +1,95 @@
+{
+  "dialect": "https://json-schema.org/draft/2020-12/schema",
+  "cases": [
+    {
+      "name": "required text and no extra properties",
+      "schema": {
+        "type": "object", "properties": { "text": { "type": "string", "minLength": 1 } },
+        "required": ["text"], "additionalProperties": false
+      },
+      "valid": [{ "text": "hello" }, { "text": "café" }],
+      "invalid": [{}, { "text": 7 }, { "text": "" }, { "text": "hello", "extra": true }]
+    },
+    {
+      "name": "nested arrays, integer bounds, and enums",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array", "minItems": 1,
+            "items": {
+              "type": "object",
+              "properties": { "count": { "type": "integer", "minimum": 1, "maximum": 3 }, "mode": { "enum": ["read", "write"] } },
+              "required": ["count", "mode"], "additionalProperties": false
+            }
+          }
+        },
+        "required": ["items"]
+      },
+      "valid": [{ "items": [{ "count": 1, "mode": "read" }] }],
+      "invalid": [{ "items": [] }, { "items": [{ "count": 0, "mode": "read" }] }, { "items": [{ "count": 1.5, "mode": "read" }] }, { "items": [{ "count": true, "mode": "write" }] }, { "items": [{ "count": 2, "mode": "unknown" }] }]
+    },
+    {
+      "name": "local references and alternatives",
+      "schema": {
+        "type": "object",
+        "$defs": { "name": { "type": "string", "pattern": "^[a-z]+$" } },
+        "properties": { "value": { "anyOf": [{ "$ref": "#/$defs/name" }, { "type": "null" }] } },
+        "required": ["value"]
+      },
+      "valid": [{ "value": "hello" }, { "value": null }],
+      "invalid": [{ "value": "HELLO" }, { "value": 3 }]
+    },
+    {
+      "name": "composed properties and unevaluated property rejection",
+      "schema": {
+        "type": "object",
+        "allOf": [
+          { "properties": { "name": { "type": "string" } }, "required": ["name"] },
+          { "properties": { "count": { "type": "integer" } }, "required": ["count"] }
+        ],
+        "unevaluatedProperties": false
+      },
+      "valid": [{ "name": "hello", "count": 2 }],
+      "invalid": [{ "name": "hello" }, { "name": "hello", "count": 2, "extra": true }, { "name": "hello", "count": false }]
+    },
+    {
+      "name": "recursive local dynamic references",
+      "schema": {
+        "$id": "https://tinyagent.example/tree-tool",
+        "type": "object",
+        "$ref": "strict",
+        "$defs": {
+          "tree": {
+            "$id": "tree",
+            "$dynamicAnchor": "node",
+            "type": "object",
+            "properties": {
+              "value": { "type": "integer" },
+              "children": { "type": "array", "items": { "$dynamicRef": "#node" } }
+            },
+            "required": ["value"]
+          },
+          "strict": {
+            "$id": "strict",
+            "$dynamicAnchor": "node",
+            "$ref": "tree",
+            "unevaluatedProperties": false
+          }
+        }
+      },
+      "valid": [{ "value": 1 }, { "value": 1, "children": [{ "value": 2, "children": [{ "value": 3 }] }] }],
+      "invalid": [{ "value": 1, "children": [{ "value": "wrong" }] }, { "value": 1, "children": [{ "value": 2, "extra": true }] }, { "value": 1, "extra": true }]
+    },
+    {
+      "name": "large integral exponent values",
+      "schema": {
+        "type": "object",
+        "properties": { "value": { "type": "integer", "minimum": 0 } },
+        "required": ["value"]
+      },
+      "valid": [{ "value": 1e300 }, { "value": 1e20 }, { "value": 0 }],
+      "invalid": [{ "value": -1e300 }, { "value": 1.5 }, { "value": true }]
+    }
+  ]
+}

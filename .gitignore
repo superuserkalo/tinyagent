@@ -1,0 +1,33 @@
+.DS_Store
+.env
+.venv/
+conformance/__pycache__/
+*.class
+tinyagents/rust/target/
+tinyagents/go/.test-*/
+tinyagents/zig/.zig-cache/
+tinyagents/zig/zig-out/
+tinyagents/csharp/**/bin/
+tinyagents/csharp/**/obj/
+tinyagents/csharp/artifacts/
+tinyagents/php/dist/
+tinyagents/elixir/_build/
+tinyagents/elixir/deps/
+tinyagents/elixir/dist/
+tinyagents/typescript/node_modules/
+tinyagents/typescript/dist/
+tinyagents/python/*.egg-info/
+tinyagents/python/__pycache__/
+tinyagents/python/build/
+
+# Local session stores written by the CLIs and examples
+.tinyagent/
+
+# Installed dependencies and built packages
+tinyagents/php/vendor/
+node_modules/
+__pycache__/
+*.pyc
+dist/
+*.tgz
+erl_crash.dump

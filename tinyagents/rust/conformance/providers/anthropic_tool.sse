@@ -1,0 +1,24 @@
+data: {"type":"message_start","message":{"id":"message_tool","type":"message","role":"assistant","model":"fixture","content":[],"usage":{"input_tokens":8},"fixture_metadata":"keep"}}
+
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}
+
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Reasoning fixture"}}
+
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"signed-"}}
+
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"fixture"}}
+
+data: {"type":"content_block_stop","index":0}
+
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call_1","name":"echo","input":{}}}
+
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"text\":\"caf"}}
+
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"é\"}"}}
+
+data: {"type":"content_block_stop","index":1}
+
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":12}}
+
+data: {"type":"message_stop"}
+

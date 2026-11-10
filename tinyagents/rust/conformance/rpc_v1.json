@@ -1,0 +1,261 @@
+{
+  "protocolVersion": 1,
+  "limits": {
+    "jsonlLineBytes": 1048576,
+    "httpBodyBytes": 1048576,
+    "queuedOutputBytes": 4194304,
+    "toolOutputBytes": 131072
+  },
+  "scenarios": [
+    {
+      "name": "idle_state",
+      "commands": [
+        {
+          "id": "state",
+          "type": "get_state"
+        }
+      ],
+      "expected": [
+        {
+          "id": "state",
+          "type": "response",
+          "command": "get_state",
+          "success": true,
+          "data": {
+            "protocolVersion": 1,
+            "status": "idle",
+            "runId": null,
+            "messageCount": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "idle_abort",
+      "commands": [
+        {
+          "id": "abort",
+          "type": "abort"
+        }
+      ],
+      "expected": [
+        {
+          "id": "abort",
+          "type": "response",
+          "command": "abort",
+          "success": true,
+          "data": {
+            "accepted": false,
+            "runId": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "unknown_with_id",
+      "commands": [
+        {
+          "id": "bad",
+          "type": "not_a_command"
+        }
+      ],
+      "expected": [
+        {
+          "id": "bad",
+          "type": "response",
+          "command": "not_a_command",
+          "success": false,
+          "error": {
+            "code": "invalid_command",
+            "message": "Unknown command type"
+          }
+        }
+      ]
+    },
+    {
+      "name": "unknown_without_id",
+      "commands": [
+        {
+          "type": "not_a_command"
+        }
+      ],
+      "expected": [
+        {
+          "type": "protocol_error",
+          "error": {
+            "code": "invalid_command",
+            "message": "Unknown command type"
+          }
+        }
+      ]
+    },
+    {
+      "name": "invalid_prompt",
+      "commands": [
+        {
+          "id": "prompt",
+          "type": "prompt",
+          "message": ""
+        }
+      ],
+      "expected": [
+        {
+          "id": "prompt",
+          "type": "response",
+          "command": "prompt",
+          "success": false,
+          "error": {
+            "code": "invalid_command",
+            "message": "prompt.message must be a non-empty string"
+          }
+        }
+      ]
+    },
+    {
+      "name": "invalid_id",
+      "commands": [
+        {
+          "id": 7,
+          "type": "get_state"
+        }
+      ],
+      "expected": [
+        {
+          "type": "protocol_error",
+          "error": {
+            "code": "invalid_command",
+            "message": "command.id must be a string"
+          }
+        }
+      ]
+    },
+    {
+      "name": "busy_abort_rollback",
+      "commands": [
+        {
+          "id": "first",
+          "type": "prompt",
+          "message": "wait"
+        },
+        {
+          "id": "second",
+          "type": "prompt",
+          "message": "busy"
+        },
+        {
+          "id": "abort",
+          "type": "abort"
+        }
+      ],
+      "expectedResponseCodes": [
+        "busy"
+      ],
+      "expectedTerminalStatus": "aborted",
+      "expectedMessageCount": 0
+    },
+    {
+      "name": "prompt_completion",
+      "providerScript": [
+        {
+          "event": "text_delta",
+          "delta": "done"
+        },
+        {
+          "return": {
+            "text": "done"
+          }
+        }
+      ],
+      "commands": [
+        {
+          "id": "prompt",
+          "type": "prompt",
+          "message": "finish"
+        }
+      ],
+      "expectedResponseBeforeEvents": true,
+      "expectedEventTypes": [
+        "agent_start",
+        "text_delta",
+        "agent_end"
+      ],
+      "expectedTerminalStatus": "completed",
+      "expectedMessageCount": 2
+    },
+    {
+      "name": "failed_run_rollback",
+      "initialCompletedPrompts": 1,
+      "providerScript": [
+        {
+          "event": "text_delta",
+          "delta": "partial"
+        },
+        {
+          "error": "provider_error"
+        }
+      ],
+      "expectedTerminalStatus": "failed",
+      "expectedMessageCount": 2
+    },
+    {
+      "name": "new_session",
+      "activeRun": true,
+      "commands": [
+        {
+          "id": "new",
+          "type": "new_session"
+        },
+        {
+          "id": "state",
+          "type": "get_state"
+        }
+      ],
+      "expectedAbortedRun": true,
+      "expectedTerminalStatus": "aborted",
+      "expectedMessageCount": 0,
+      "expectedStatus": "idle"
+    },
+    {
+      "name": "jsonl_framing",
+      "assertions": [
+        "one_object_per_lf",
+        "escaped_embedded_newlines",
+        "stdout_has_no_diagnostics"
+      ]
+    },
+    {
+      "name": "clean_eof",
+      "activeRun": true,
+      "expectedTerminalStatus": "aborted",
+      "expectedExitStatus": 0
+    },
+    {
+      "name": "malformed_json",
+      "lines": [
+        "{"
+      ],
+      "expectedProtocolError": "invalid_json"
+    },
+    {
+      "name": "oversized_output",
+      "providerScript": [
+        {
+          "event": "text_delta",
+          "deltaBytes": 1048576
+        }
+      ],
+      "expectedProtocolError": "output_too_large",
+      "expectedRunCancellation": true
+    },
+    {
+      "name": "oversized_line",
+      "expectedProtocolError": "line_too_large",
+      "terminates": true
+    },
+    {
+      "name": "invalid_utf8",
+      "expectedProtocolError": "invalid_utf8",
+      "terminates": true
+    }
+  ]
+}

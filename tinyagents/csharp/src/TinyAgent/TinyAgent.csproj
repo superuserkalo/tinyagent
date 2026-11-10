@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <PackageId>TinyAgent.Sdk</PackageId>
+    <Version>0.0.1</Version>
+    <Description>Native TinyAgent tool runs, streaming providers, ordered events, cancellation, and JSONL RPC.</Description>
+    <Authors>Radian Labs</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="JsonSchema.Net" Version="[8.0.5]" />
+    <InternalsVisibleTo Include="TinyAgent.Http" />
+    <InternalsVisibleTo Include="TinyAgent.Cli" />
+    <InternalsVisibleTo Include="TinyAgent.Checks" />
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+    <None Include="../../LICENSE" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

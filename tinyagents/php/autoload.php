@@ -1,0 +1,30 @@
+<?php
+declare(strict_types=1);
+
+require_once __DIR__ . '/src/CancellationToken.php';
+require_once __DIR__ . '/src/Cooperative.php';
+require_once __DIR__ . '/src/Json.php';
+require_once __DIR__ . '/src/Bash.php';
+require_once __DIR__ . '/src/Messages.php';
+require_once __DIR__ . '/src/Provider.php';
+require_once __DIR__ . '/src/ToolSchema.php';
+require_once __DIR__ . '/src/Tool.php';
+require_once __DIR__ . '/src/Sse.php';
+require_once __DIR__ . '/src/HttpClient.php';
+require_once __DIR__ . '/src/CurlClient.php';
+require_once __DIR__ . '/src/ProviderStream.php';
+require_once __DIR__ . '/src/OpenAIProvider.php';
+require_once __DIR__ . '/src/AnthropicProvider.php';
+require_once __DIR__ . '/src/AgentEvent.php';
+require_once __DIR__ . '/src/RunResult.php';
+require_once __DIR__ . '/src/Agent.php';
+require_once __DIR__ . '/src/Session.php';
+require_once __DIR__ . '/src/RpcSession.php';
+require_once __DIR__ . '/src/RpcProtocol.php';
+require_once __DIR__ . '/src/RpcIO.php';
+require_once __DIR__ . '/src/RpcSignals.php';
+require_once __DIR__ . '/src/RpcOutput.php';
+require_once __DIR__ . '/src/RpcInput.php';
+require_once __DIR__ . '/src/Rpc.php';
+require_once __DIR__ . '/src/HttpJson.php';
+require_once __DIR__ . '/src/HttpServer.php';

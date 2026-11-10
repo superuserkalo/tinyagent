@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tiny-agent-sdk"
+version = "0.0.1"
+description = "A small agent SDK: validated tools, streaming, cancellation, durable sessions, resume, and compaction"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "TinyAgent contributors" }]
+keywords = ["agent", "llm", "tools", "openai", "anthropic"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = ["jsonschema==4.26.0", "referencing==0.37.0"]
+
+[project.scripts]
+tinyagent = "tiny_agent:main"
+
+[tool.setuptools]
+py-modules = [
+    "tiny_agent",
+    "tinyagent",
+    "tinyagent_types",
+    "tinyagent_session",
+    "tinyagent_storage",
+    "tinyagent_http",
+    "tinyagent_http_body",
+    "tinyagent_openai",
+    "tinyagent_anthropic",
+    "tinyagent_sse",
+    "tinyagent_rpc",
+    "tinyagent_rpc_io",
+]

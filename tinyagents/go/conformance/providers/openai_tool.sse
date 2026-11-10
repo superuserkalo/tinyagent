@@ -1,0 +1,15 @@
+: keep-alive
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","delta":"Working "}
+
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning","id":"reason_1","encrypted_content":"opaque-fixture","summary":[]}}
+
+data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"item_1","call_id":"call_1","name":"echo","arguments":""}}
+
+data: {"type":"response.function_call_arguments.delta","output_index":1,"delta":"{\"text\":\"caf"}
+
+data: {"type":"response.function_call_arguments.delta","output_index":1,"delta":"é\"}"}
+
+data: {"type":"response.completed","response":{"output":[{"type":"reasoning","id":"reason_1","encrypted_content":"opaque-fixture","summary":[]},{"type":"function_call","id":"item_1","call_id":"call_1","name":"echo","arguments":""}]}}
+
