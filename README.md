@@ -147,7 +147,8 @@ clone, after the install steps above:
 node tinyagents/typescript/tiny_agent.ts
 ```
 
-Type a task at the prompt. Ctrl-C exits. To use Anthropic instead of OpenAI:
+Type a task at the prompt. Ctrl-C exits. Python, TypeScript, Go, Rust and Zig
+can use Anthropic instead of OpenAI:
 
 ```sh
 export TINYAGENT_PROVIDER="anthropic"
@@ -186,9 +187,8 @@ tinyagents/<language>/   one native implementation each
 PROTOCOL.md              the contract every implementation follows
 conformance/             fixtures shared by all languages, and the runner
 sdk/README.md            SDK reference across languages
-docs/                    implementation notes and the acceptance audit
+docs/                    notes on individual implementations
 FINISH_CONTRACT.md       what the first release requires, and where it stands
-ROADMAP.md               scope, milestones, and what is deliberately left out
 ```
 
 ## Running the checks
@@ -210,8 +210,8 @@ cd tinyagents/typescript && npm run check && npm test
 
 Branching, orchestration, plugins, parallel tools, steering, prompt queues, an
 approval interface, extra storage backends, built-in TLS, and multi-user
-ownership. TinyAgent stays small on purpose. The [roadmap](ROADMAP.md) explains
-what would bring any of them in.
+ownership. TinyAgent stays small on purpose. A feature comes in when real use
+needs it and it can stay readable.
 
 ## Contributing
 

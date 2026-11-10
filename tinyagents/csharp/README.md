@@ -8,6 +8,13 @@ Schemas use JsonSchema.Net 8.0.5 and its MIT-licensed dependencies. This version
 precedes the maintenance-fee agreement added to later binary releases.
 The dependency graph is recorded in NuGet lockfiles.
 
+Status: experimental reference implementation. Sessions are held in memory:
+durable sessions, resume, recovery and compaction are not implemented, so the
+"Durable sessions and compaction" section of
+[PROTOCOL.md](../../PROTOCOL.md) does not apply here. These packages are not in
+CI. Their checks were last run in September 2026 on macOS arm64 and have not
+been re-run since.
+
 ## Run an agent
 
 ```csharp
@@ -142,8 +149,8 @@ files use `FileStream`. No native interop shim or additional package is needed.
 
 ## Serve HTTP sessions
 
-Install `TinyAgent.Http` and the ASP.NET Core 8 runtime to host the five routes
-in [PROTOCOL.md](../../PROTOCOL.md). The SDK package alone does not require
+Install `TinyAgent.Http` and the ASP.NET Core 8 runtime to host the five
+baseline routes in [PROTOCOL.md](../../PROTOCOL.md). The SDK package alone does not require
 ASP.NET Core.
 
 ```csharp
@@ -216,31 +223,34 @@ python3 check.py
 python3 check.py --offline
 ```
 
-The helper builds the library, checks, and original CLI with warnings treated as
+The helper builds the library, the checks, and the CLI with warnings treated as
 errors. It creates `artifacts/TinyAgent.Sdk.0.0.1.nupkg` and
-`artifacts/TinyAgent.Http.0.0.1.nupkg`, runs ninety-five native
-provider/core/tool/session/RPC/HTTP/Bash/CLI groups, and checks the CLI blacklist, with provider
+`artifacts/TinyAgent.Http.0.0.1.nupkg`, runs the native checks in
+`tests/TinyAgent.Checks/`, and checks the CLI blacklist, with provider
 credentials removed. Restore uses NuGet's public feed with locked dependencies.
-Set `TINYAGENT_NUGET_SOURCE` to a local feed for cached packages.
+Set `TINYAGENT_NUGET_SOURCE` to a local feed for cached packages. Neither
+command calls a paid provider.
 
-The full check includes four mandatory TCP groups. `--offline` explicitly omits
-them and exercises native `SocketsHttpHandler` serialization, HTTP parsing, and
-SSE parsing over fragmented memory streams, plus real RPC subprocess pipes and
-file redirection. HTTP server checks connect real Kestrel and `SocketsHttpHandler`
-through bounded in-memory pipes, including native framing, authentication,
-concurrent sessions, cancellation, disconnects, failed final chunks, and held
-shutdown cleanup. Five Bash groups cover native execution and process cleanup;
-eleven CLI groups compile the same CLI source and use the SDK's streaming provider
-over a fixture HttpClient. They verify replay, sequential Bash calls, invalid
-arguments, bounded failures, immutable history, callback failures, cancellation,
-console rollback, and unterminated EOF. Native CLI subprocesses cover Ctrl-C
-during idle input, HTTP, Bash, and stalled stdout/stderr, plus broken stdout and
-`/dev/null` redirection. Cleanup checks observe released HTTP streams, disposed
-providers, and terminated Bash children.
-RPC subprocess and Bash checks require Linux or macOS. Offline success
-does not establish TCP acceptance. The full source check passes all four TCP
-groups on macOS. Neither command calls a paid provider. Current package and
-final acceptance are tracked in [the finish contract](../../FINISH_CONTRACT.md).
+The full check includes four groups that bind loopback TCP sockets. `--offline`
+omits them. The remaining checks exercise:
+
+- providers: native `SocketsHttpHandler` serialization, HTTP parsing, and SSE
+  parsing over fragmented memory streams;
+- RPC: real subprocess pipes and file redirection;
+- HTTP: Kestrel and `SocketsHttpHandler` connected through bounded in-memory
+  pipes, covering framing, authentication, concurrent sessions, cancellation,
+  disconnects, failed final chunks, and held shutdown cleanup;
+- Bash: native execution and process-group cleanup;
+- CLI: the same CLI source with the SDK's streaming provider over a fixture
+  `HttpClient`, plus native subprocesses for Ctrl-C during idle input, HTTP,
+  Bash, and stalled output.
+
+The RPC subprocess and Bash checks require Linux or macOS. A passing
+`--offline` run says nothing about TCP behavior.
+
+Last verified in September 2026 on macOS arm64, and not covered by CI. At that
+time the full check passed, including the four TCP groups. Linux and Windows
+are unverified.
 
 Use the local NuGet package from a separate .NET project:
 

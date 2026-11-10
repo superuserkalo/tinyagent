@@ -5,13 +5,21 @@ streaming, custom providers, schema-checked sequential tools, ordered events,
 owned history, sessions, native task cancellation, guarded Bash, JSONL RPC, and
 HTTP sessions. The coding CLI and both transports use the same Agent and session.
 
+Status: experimental reference implementation. Sessions are held in memory:
+durable sessions, resume, recovery and compaction are not implemented, so the
+"Durable sessions and compaction" section of
+[PROTOCOL.md](../../PROTOCOL.md) does not apply here. This package is not in
+CI. Its checks were last run in September 2026 on macOS arm64 and have not been
+re-run since.
+
 The SDK requires Zig 0.16.0. Building also requires Cargo and a Rust toolchain;
-this checkpoint uses Rust 1.96.1. Schema validation statically links `jsonschema`
+it was last built with Rust 1.96.1. Schema validation statically links `jsonschema`
 0.30.0 through the small `schema-native` library. Its dependencies are locked,
 HTTP/file retrieval features are disabled, and runtime lookup rejects external
 schemas. Running an SDK executable does not require a Rust installation. The
 agent loop, handlers, providers, sessions, and transports are Zig code.
-`tiny_agent.zig` owns process signals and dispatches to the SDK's CLI module;
+[The schema validation notes](../../docs/zig-schema-validation.md) explain this
+choice. `tiny_agent.zig` owns process signals and dispatches to the SDK's CLI module;
 it is included in the source package and requires the same Zig version.
 
 ## Build and checks
@@ -36,17 +44,22 @@ The shared runner also executes these checks:
 python3 ../../conformance/run.py zig
 ```
 
-The finish contract records package and platform evidence separately from source checks.
 The checks require Python 3 for the subprocess harness; the SDK itself has no
 Python dependency. `-j1` serializes test executables so separate suites do not
 compete with the short subprocess shutdown deadlines. Each lifecycle test still
-runs its own concurrent tasks. Seventeen core groups, seventeen provider groups, thirteen
-session groups, ten tool groups, four Bash groups, two console/configuration groups,
-five output groups, nine CLI subprocess groups, seventeen RPC subprocess groups, and thirteen
-HTTP socket groups cover
-the implemented runtime without credentials or paid API requests. Provider
-checks include real loopback HTTP connections. The package includes the four
-shared SSE fixtures and RPC fixture so its checks also run outside this workspace.
+runs its own concurrent tasks. The suites cover the core, providers, sessions,
+tools, Bash, the console, output framing, the CLI, RPC subprocesses, and HTTP
+sockets, without credentials or paid API requests. Provider checks include real
+loopback HTTP connections.
+
+`test/fixtures/` holds byte-identical copies of the four shared SSE fixtures,
+`rpc_v1.json` and `tool_arguments.json`, so the checks also run outside this
+repository. The shared runner rejects stale copies. Refresh them from this
+directory after changing the shared files:
+
+```sh
+cp ../../conformance/*.json ../../conformance/providers/*.sse test/fixtures/
+```
 
 ## Coding CLI
 
@@ -222,12 +235,13 @@ within the 128 KiB output limit. Stdin is closed. The command blacklist preserve
 the coding CLI's checks; it is not a sandbox. Cancellation or output overflow
 stops the process group on POSIX, including descendants retaining pipes after
 the shell exits. Windows stops the direct child. Cleanup joins the native process
-wait. The process checks have been executed on macOS arm64.
+wait.
 
-Native execution is verified on macOS arm64. The build selects Rust targets for
-macOS, Linux, and Windows GNU on arm64/x86-64; other targets are rejected. Cross
-builds also need the matching Rust target and native linker dependencies. Those
-cross-platform builds are not yet verified.
+Native execution, including the process checks, was last verified on macOS
+arm64 in September 2026. The build selects Rust targets for macOS, Linux, and
+Windows GNU on arm64/x86-64; other targets are rejected. Cross builds also need
+the matching Rust target and native linker dependencies. Builds for other
+platforms are unverified.
 
 ## Sessions
 

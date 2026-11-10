@@ -232,8 +232,8 @@ From a clone, `python tiny_agent.py` does the same. The CLI reads
 the current directory, or `TINYAGENT_SESSION_DIR`. `TINYAGENT_CONTEXT_TOKENS`
 turns on compaction with a rough byte-count estimate, and
 `TINYAGENT_RESPONSE_RESERVE` sets the reserve (4096 by default). In the
-interactive prompt, `/history`, `/compact`, and `/reconcile <note>` call the
-session methods of the same name.
+interactive prompt, `/history` prints `session.records`, and `/compact` and
+`/reconcile <note>` call the session methods of the same name.
 
 The CLI's Bash tool runs commands the model writes. Its list of denied commands
 catches obvious mistakes. It is not a sandbox.

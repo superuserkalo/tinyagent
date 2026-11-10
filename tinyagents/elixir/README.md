@@ -8,12 +8,19 @@ Agent loop with validated sequential tools and bounded, cancellable Bash.
 `HttpServer` exposes authenticated HTTP sessions around the same session controller.
 `ToolDefinition` is provider metadata only.
 
+Status: experimental reference implementation. Sessions are held in memory:
+durable sessions, resume, recovery and compaction are not implemented, so the
+"Durable sessions and compaction" section of
+[PROTOCOL.md](../../PROTOCOL.md) does not apply here. This package is not in
+CI. Its checks were last run in September 2026 on macOS arm64 and have not been
+re-run since.
+
 ## Use from a Mix application
 
 Add a local dependency to your application's `mix.exs`:
 
 ```elixir
-{:tiny_agent_sdk, path: "/path/to/TinyAgent/tinyagents/elixir"}
+{:tiny_agent_sdk, path: "/path/to/tinyagent/tinyagents/elixir"}
 ```
 
 The SDK declares Elixir 1.15 or later and pins Mint 1.10.0, Jason 1.4.5,
@@ -21,11 +28,9 @@ Bandit 1.12.5, Plug 1.20.3, and Thousand Island 1.5.0. The lockfile pins their
 five transitive dependencies. Tool schemas use JSV 0.22.0 with abnf_parsec 2.1.0,
 Texture 1.2.1, IDNA 7.1.0, and NimbleParsec 1.4.2; all versions and checksums
 are locked. Mint 1.10.0 fixes unbounded response-line buffering
-and chunk-size parsing. It has been checked on Elixir 1.20.4 and OTP 29.
-Strict compilation and Hex packaging pass on macOS. Earlier native subprocess
-timeouts remain recorded; acceptance runs bound schedulers and concurrent groups.
-The [finish contract](../../FINISH_CONTRACT.md) records independent consumer
-and platform acceptance.
+and chunk-size parsing. The SDK was last checked in September 2026 on macOS
+with Elixir 1.20.4 and OTP 29. Linux, and Elixir 1.15, the declared minimum,
+are unverified.
 
 On macOS and Linux, building also requires a C11 compiler and the Erlang NIF
 headers shipped with Erlang development packages. The build uses `cc`; `CC` may
@@ -392,53 +397,44 @@ The dependency directory must contain an `ebin` directory for every library in
 formatting, compiles the SDK and CLI with warnings treated as errors, runs ExUnit,
 and runs the shared CLI blacklist self-test.
 `--sdk-path /path/to/extracted/package` runs the same tests against a separately
-extracted source archive. `--offline` explicitly excludes sixteen mandatory TCP
-tests; the default includes them.
+extracted source archive. `--offline` excludes the tests tagged `:tcp`, which
+bind loopback sockets; the default includes them.
 
-One hundred and twenty offline tests cover tools, Bash, the CLI, the core, providers, sessions, and native RPC. They exercise Mint's
-actual HTTP serializer and parser over fragmented memory transport, shared
-provider fixtures, replay, byte limits, informational HTTP responses, ordered
-events, immutable results, nested and concurrent runs, cancellation, and held
-cleanup and final delivery. Session checks cover shared parsed commands,
-acknowledgement ordering, history rollback, reset, self-close, and owner exit.
-Eight subprocess checks exercise the internal native I/O bridge over real pipes
-and files: byte preservation, EOF, partial writes, stalled and broken output,
-invalid operations, owner exit, and SIGINT restoration. The bridge borrows
-descriptors exclusively, restores their flags, and closes its own duplicates;
-owner monitors release retained resources. Twenty-three further subprocess checks
-cover JSONL commands, exact line and queue limits, history commit and rollback,
-stalled and broken output, pending acknowledgements, final delivery, reset,
-EOF, SIGINT, external cancellation, invalid startup, and owner cleanup. The
-driver has been verified on macOS; its Linux build and Elixir 1.15 lower boundary
-remain unverified. Eleven Bash tests cover validation, bounded output, separate
-streams, stdin EOF, invalid bytes, cancellation, independent calls, caller state,
-background processes, owner exit, and startup environment. Eleven CLI tests cover
-native streaming, typed replay, recoverable failures, rollback, request cancellation,
-EOF, restored settings, idle/request/Bash interrupts, stalled output, and broken
-output. Python only drives these native tests; it is not a runtime dependency.
+What the tests cover:
 
-The memory transport checks do not prove TCP or TLS behavior. The full command
-adds both provider TCP groups and fourteen HTTP groups, for 136 checks in total.
-Eleven tool groups cover the shared schema cases, invalid construction, immutable
-arguments, annotations, native provider replay, bounded recovery, cancellation,
-held cleanup, consumer failures, and retained callbacks. Additional native RPC,
-session, and HTTP cases verify tool events, cancellation, and atomic history.
-HTTP checks cover native framing, IPv4/IPv6 authentication, JSON and byte bounds,
-ordered events, history rollback, independent sessions, busy handling, oversized
-output, silent disconnects, cancelled stalled writes, deletion, callback shutdown,
-and creating-process exit. Cleanup can remain held during deletion and shutdown.
-The Mint regression rejects oversized unfinished status and chunk-extension lines
-and excessive chunk-size digits through its actual parser.
-A forced EOF/final-write interleaving checks that a successfully delivered
-terminal response still commits history.
-ExUnit runs at most two
-groups concurrently because several groups launch additional BEAM runtimes.
-Current acceptance is tracked in the [finish contract](../../FINISH_CONTRACT.md).
-The original entrypoint's self-test
-passes with the compiled SDK on its code path:
+- providers: Mint's HTTP serializer and parser over a fragmented memory
+  transport, the shared provider fixtures, replay, byte limits, and
+  informational HTTP responses. These do not prove TCP or TLS behavior;
+- core: ordered events, immutable results, nested and concurrent runs,
+  cancellation, and held cleanup and final delivery;
+- sessions: the shared parsed commands, acknowledgement ordering, history
+  rollback, reset, self-close, and owner exit;
+- native I/O bridge and RPC, through real subprocesses: byte preservation,
+  EOF, partial writes, stalled and broken output, exact line and queue limits,
+  history commit and rollback, SIGINT, external cancellation, and owner
+  cleanup;
+- tools: the shared schema cases, invalid construction, immutable arguments,
+  annotations, bounded recovery, cancellation, and consumer failures;
+- Bash: validation, bounded output, separate streams, cancellation, background
+  processes, and owner exit;
+- CLI: streaming, replay, recoverable failures, rollback, EOF, and interrupts
+  during idle input, requests, Bash, and stalled output;
+- over TCP (omitted by `--offline`): both providers, and the HTTP server's
+  framing, IPv4/IPv6 authentication, byte bounds, ordered events, history
+  rollback, independent sessions, silent disconnects, cancelled stalled
+  writes, deletion, and shutdown.
+
+Python only drives the native subprocess tests; it is not a runtime dependency.
+`test/test_helper.exs` limits ExUnit to two concurrent groups because several
+groups launch additional BEAM runtimes.
+
+The direct check leaves a compiled SDK in `_build/direct`, which the CLI
+entrypoint can use:
 
 ```sh
 elixir -pa _build/direct/lib/tiny_agent_sdk/ebin tiny_agent.exs --self-test
 ```
 
-Linux and execution on the minimum supported Elixir version remain unverified.
+Last verified in September 2026 on macOS arm64, and not covered by CI. At that
+time `mix test`, the direct check, and Hex packaging passed. Linux and
+execution on Elixir 1.15 are unverified.

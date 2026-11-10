@@ -137,8 +137,8 @@ versioned and checksummed. What you can rely on:
 - **Corruption.** A complete record that fails its checksum, order, or
   encoding makes `open` throw `SessionCorruptionError`. The file is left as it
   was found.
-- **Failed writes.** If the disk refuses a record, the run stops before any
-  tool executes and the session object refuses further work. Reopen it.
+- **Failed writes.** If the disk refuses a record, the run stops, no further
+  tool starts, and the session object refuses further work. Reopen it.
 - **Interrupted tools.** A tool call is written down before the tool runs. If
   the run then ends without committing (a crash, a cancellation, a failed
   consumer), the session cannot know whether the tool's effect happened, and
@@ -266,7 +266,8 @@ defines framing, errors, and limits.
 - Sessions lock through `node:sqlite`. Node 22 prints one `ExperimentalWarning`
   about it on stderr the first time a process opens a durable session. Node 24
   and later print nothing. In-memory sessions never load it.
-- Tested on macOS. CI is set up for macOS and Linux. Windows is untested.
+- CI runs the tests on Linux and macOS with Node.js 22 and 24. Windows is
+  untested.
 - A tool whose effects matter should be safe to repeat, or should record enough
   for you to reconcile after an interruption. TinyAgent does not promise
   exactly-once effects.

@@ -7,8 +7,8 @@ contributing is keeping it that way.
 
 - For a bug, open an issue with the language, the version or commit, and the
   smallest steps that reproduce it.
-- For a new feature, open an issue first. The [roadmap](ROADMAP.md) lists what
-  is intentionally out of scope, and a feature has to earn its lines.
+- For a new feature, open an issue first. The [README](README.md#what-is-deliberately-left-out)
+  lists what is intentionally out of scope, and a feature has to earn its lines.
 - For a typo or a small fix, just send the pull request.
 
 ## Which code is supported

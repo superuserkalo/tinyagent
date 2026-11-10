@@ -6,7 +6,15 @@ history, cancellation, native JSONL RPC, HTTP sessions, and guarded Bash executi
 RPC and HTTP share the same session owner. The SDK, coding CLI, RPC, and HTTP
 server use one `Agent` loop with schema-validated native tools.
 
-Build the SDK with the commands below, then run the original CLI from this directory:
+Status: experimental reference implementation. Sessions are held in memory:
+durable sessions, resume, recovery and compaction are not implemented, so the
+"Durable sessions and compaction" section of
+[PROTOCOL.md](../../PROTOCOL.md) does not apply here. This module is not in CI.
+Its checks were last run in September 2026 on macOS arm64 and have not been
+re-run since.
+
+Build the SDK with the commands under [Build and checks](#build-and-checks),
+then run the CLI from this directory:
 
 ```sh
 java -cp 'target/tiny-agent-0.1.0.jar:target/dependency/*' TinyAgent.java
@@ -223,7 +231,7 @@ chooses an available port. Non-loopback binding requires explicit remote opt-in
 and a nonempty token. Configured tokens protect every route, including health.
 Duplicate Authorization headers are rejected. No CORS headers are added.
 
-All five routes follow [PROTOCOL.md](../../PROTOCOL.md). Create a session, then
+The five baseline routes follow [PROTOCOL.md](../../PROTOCOL.md). Create a session, then
 post a JSON `message` to `/sessions/:id/prompts` for ordered JSONL events. Each
 session admits one run; separate sessions can run concurrently. Failed,
 cancelled, disconnected, and undelivered runs retain the previous history.
@@ -289,10 +297,12 @@ The direct check command also copies all twelve dependency JARs into
 `target/dependency` for the CLI commands above:
 
 ```sh
-cd tinyagents/java
 mvn package
 python3 check.py
 ```
+
+Run both from this directory. `mvn package` downloads the declared dependencies
+into the local Maven repository, which `check.py` then reads.
 
 The native checks run through `check.py`, not Maven's test lifecycle. The
 script reads dependency coordinates from the POM and uses those JARs from
@@ -311,33 +321,32 @@ For a focused run without TCP binding:
 python3 check.py --offline
 ```
 
-Sixty-five offline SDK groups cover shared SSE fixtures split into individual bytes, request
-serialization, replay metadata, strict UTF-8 and JSON framing, bounds,
-incomplete turns, immutable values, cancellation, timeouts, interruption,
-consumer failure, terminal cleanup, and HTTP client ownership. Core and session
-checks also cover ordered events, concurrent runs, completed history, admission,
-reset, cancellation during final delivery, and shutdown from callbacks. Fourteen
-RPC groups add real subprocesses, native pipes, shared command fixtures, bounds,
-busy handling, tool execution, rollback, EOF, Ctrl-C, blocked writes, and failed output cleanup.
-Nine tool groups cover shared schemas, construction failures, native provider
-replay, sequential recovery, output bounds, cancellation, held cleanup,
-interruption, consumer failure, request-scoped callbacks, and session commit.
-Six Bash groups cover shared guards, stdout/stderr, output bounds, cancellation,
-interruption, independent commands, and native process cleanup. Eleven additional
-CLI groups cover streaming, final text without deltas, replay, sequential tools,
-argument errors, overflow recovery, committed history, provider and output
-failure, HTTP/Bash cancellation, and real Ctrl-C during idle input, requests,
-Bash, and stalled output. Native checks verify provider cleanup and child
-termination before JVM exit. The CLI
-self-test also runs through the documented source entrypoint.
-The full run adds mandatory OpenAI and Anthropic TCP checks and ten HTTP socket
-groups covering routes, authentication, request framing, exact body limits,
-history rollback, independent sessions, cancellation, oversized events, stalled
-output, tools, disconnects, deletion, and joined shutdown. `--offline` excludes these
-twelve socket groups. The full run has 77 SDK groups and 11 CLI groups.
-Checks execute against the packaged JAR.
+The offline checks cover:
 
-The full direct JDK check passes with OpenJDK 25.0.1 using `--release 21`,
-including provider and server sockets. Maven 3.9.16 also builds the package.
-Maven compilation does not execute the native check runner. See the
-[finish contract](../../FINISH_CONTRACT.md) for current evidence and remaining work.
+- providers: the shared SSE fixtures split into individual bytes, request
+  serialization, replay metadata, strict UTF-8 and JSON framing, bounds,
+  incomplete turns, cancellation, timeouts, interruption, consumer failure,
+  and HTTP client ownership;
+- core and sessions: ordered events, concurrent runs, completed history,
+  admission, reset, cancellation during final delivery, and shutdown from
+  callbacks;
+- RPC: real subprocesses, native pipes, the shared command fixtures, bounds,
+  busy handling, tool execution, rollback, EOF, Ctrl-C, blocked writes, and
+  failed output cleanup;
+- tools: the shared schema cases, construction failures, sequential recovery,
+  output bounds, cancellation, held cleanup, and consumer failure;
+- Bash: the shared guards, output bounds, cancellation, interruption, and
+  process cleanup;
+- CLI: streaming, replay, sequential tools, argument errors, overflow
+  recovery, committed history, and real Ctrl-C during idle input, requests,
+  Bash, and stalled output.
+
+The full run adds OpenAI and Anthropic provider checks and HTTP server checks
+over loopback sockets. `--offline` excludes them. All checks execute against
+the packaged JAR, and the CLI self-test runs through the source entrypoint
+shown above.
+
+Last verified in September 2026 on macOS arm64, and not covered by CI. At that
+time the full check passed with OpenJDK 25.0.1 using `--release 21`, and Maven
+3.9.16 built the package. Maven's own test lifecycle does not run these checks.
+Linux and Windows are unverified.

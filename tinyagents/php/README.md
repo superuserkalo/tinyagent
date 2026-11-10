@@ -1,14 +1,36 @@
 # TinyAgent PHP SDK
 
 Native agent runs with validated tools, ordered events, immutable completed
-history, and streaming OpenAI Responses or Anthropic Messages. The SDK requires
-PHP 8.4 with JSON, cURL, and iconv. Install the pinned Composer dependencies
-before running the examples. `RpcSession` adds parsed commands and committed session
+history, and streaming OpenAI Responses or Anthropic Messages. `RpcSession` adds parsed commands and committed session
 history; `Rpc` adds native POSIX JSONL transport with PCNTL. `HttpServer` serves
 authenticated HTTP sessions through ReactPHP and the same session driver.
 The imported SDK, coding CLI, RPC, and HTTP server share one `Agent` loop.
 `Tool` validates arguments through Opis JSON Schema 2.6.0 before invoking its
 native PHP handler.
+
+Status: experimental reference implementation. Sessions are held in memory:
+durable sessions, resume, recovery and compaction are not implemented, so the
+"Durable sessions and compaction" section of
+[PROTOCOL.md](../../PROTOCOL.md) does not apply here. This package is not in
+CI. Its checks were last run in September 2026 on macOS arm64 and have not been
+re-run since.
+
+## Install
+
+The SDK requires PHP 8.4 with the JSON, cURL, and iconv extensions, and
+[Composer](https://getcomposer.org/). PCNTL is also required for native RPC,
+HTTP serving, and the coding CLI.
+
+The `vendor/` directory is not committed. From the repository root, install the
+locked dependencies before running the examples, the CLI, or the checks:
+
+```sh
+cd tinyagents/php
+composer install --no-scripts --no-plugins
+```
+
+The examples below assume they are saved in this directory, so that
+`__DIR__ . '/vendor/autoload.php'` resolves.
 
 ## Run an agent
 
@@ -256,15 +278,12 @@ suppression. `runStdio()` also owns SIGINT; embedded `run()` can opt into it wit
 `handleInterrupt: true`. Only one connection may own SIGINT. Previous handlers
 are restored unless the application replaced them during the connection, and
 the application's asynchronous signal-dispatch setting is preserved. This
-transport is verified on macOS; Linux acceptance remains open.
+transport has only been run on macOS; Linux is unverified.
 
 ## HTTP sessions
 
-Install the pinned HTTP dependencies from this directory:
-
-```sh
-composer install --no-scripts --no-plugins
-```
+HTTP serving uses the ReactPHP packages installed by the
+[install step](#install).
 
 ```php
 <?php
@@ -348,66 +367,54 @@ php check.php
 php check.php --offline
 ```
 
-The helper checks PHP syntax, creates `dist/tinyagent-sdk-0.0.1.zip`, runs core
-and provider checks, and checks the CLI blacklist. Packaging uses the zip extension.
-The full suite includes two provider and eleven HTTP TCP groups and needs the PCNTL
-extension for its local fixture processes. HTTP backpressure checks also use
-the sockets extension to restrict the client's receive window. The offline RPC groups also require
-PCNTL. Missing extensions or denied sockets
-cause failures. `--offline` explicitly excludes provider and HTTP TCP groups.
-Neither command calls a paid provider.
+Run `composer install --no-scripts --no-plugins` first. The helper checks PHP
+syntax, creates `dist/tinyagent-sdk-0.0.1.zip`, runs the native checks in
+`tests/`, and runs the CLI blacklist self-test. Neither command calls a paid
+provider.
 
-The eighty-four offline groups exercise the core and deliver fragmented response
-bytes through an injected `HttpClient`. They cover serialization, SSE parsing,
-replay, typed events, value snapshots, cancellation, deadlines, consumer failures,
-held cleanup and final delivery, and independent fiber runs. The provider byte
-fixtures do not exercise native cURL, HTTP framing, or TCP. Thirteen session groups add shared parsed
-commands, strict native-value checks, acknowledgement order, committed history,
-busy/abort/reset, failed emitters, held cleanup and final delivery, callback-
-initiated shutdown, concurrent sessions, and waiters scoped to their observed run.
+Extensions the checks need beyond the SDK's own:
 
-Seventeen transport groups add native subprocess pipes, Unix socket pairs, JSONL
-limits, command correlation, committed history, EOF/SIGINT, broken or stalled
-output, queue overflow, held cleanup, and stream and signal ownership. A native
-cURL file transfer proves that its C callback can suspend and resume a PHP
-fiber; it does not prove the HTTP client or network scheduling over TCP.
+- zip, for packaging;
+- PCNTL, for the RPC groups and the local fixture processes;
+- sockets, for the HTTP backpressure checks, which restrict the client's
+  receive window;
+- POSIX, to verify that recorded child PIDs disappear.
 
-Both provider TCP groups now pass with native cURL, including streamed text,
-cancellation during headers and body delivery, deadlines, and connection cleanup.
-The HTTP groups cover framing, limits, authentication, ordered events, history,
-busy sessions, cancellation, and silent disconnects. A stalled terminal response
-after provider cleanup verifies rollback on cancellation and disconnect. Deletion
-and shutdown retain a provider whose cleanup is explicitly held by the fixture.
-Ten tool groups add shared schemas, construction failures, immutable inputs,
-sequential errors, bounded outputs, both providers and replay, cancellation, held
-cleanup, callback ownership, and RPC commit and rollback. HTTP also checks tool
-events and cancellation over TCP. The full suite contains 97 groups. See the
-[finish contract](../../FINISH_CONTRACT.md) for package and final acceptance.
+A missing extension or a denied socket is a failure, not a skip. The full suite
+includes provider and HTTP groups that bind loopback TCP sockets; `--offline`
+excludes them.
 
-Seven Bash groups cover guards, native output and status, exact combined bounds,
-infinite output, cancellation, exceptions thrown into fibers, independent commands,
-background cleanup, and scheduling scope. Eleven CLI groups add streamed and
-terminal-only text, opaque replay, sequential observations, invalid arguments,
-overflow recovery, provider and callback failures, history rollback, request
-and Bash cancellation, and retained-callback rejection. Exceptions thrown into
-SDK-owned fibers survive provider and Bash cleanup. Native subprocesses verify
-EOF, idle/request/Bash SIGINT, stalled stdout/stderr, broken output, and restored
-stream ownership, blocking modes, and process signals. Native process checks
-also use the POSIX extension to verify that recorded child PIDs disappear.
+What the checks cover:
 
-The ZIP contains thirty runtime PHP files, this README, the MIT license,
-`composer.json`, and ten schema resource files. Tests and the CLI are excluded. Extract it into a
-library directory and require its `autoload.php`. Composer can also load that
+- core and providers: serialization, SSE parsing, replay, typed events, value
+  snapshots, cancellation, deadlines, consumer failures, held cleanup and final
+  delivery, and independent fiber runs. These deliver fragmented response bytes
+  through an injected `HttpClient`, so they do not exercise native cURL, HTTP
+  framing, or TCP;
+- sessions: the shared parsed commands, acknowledgement order, committed
+  history, busy/abort/reset, failed emitters, and callback-initiated shutdown;
+- RPC transport: native subprocess pipes, Unix socket pairs, JSONL limits,
+  EOF/SIGINT, broken or stalled output, queue overflow, and stream and signal
+  ownership;
+- tools: the shared schema cases, construction failures, immutable inputs,
+  bounded outputs, cancellation, and RPC commit and rollback;
+- Bash: guards, output bounds, cancellation, and background cleanup;
+- CLI: streamed text, replay, sequential observations, invalid arguments,
+  history rollback, and EOF and SIGINT handling in native subprocesses;
+- over TCP (full suite only): both providers through native cURL, and the HTTP
+  server's framing, limits, authentication, ordered events, history, busy
+  sessions, cancellation, and silent disconnects.
+
+`package.php` writes the ZIP. It contains the runtime PHP files (`autoload.php`
+and `src/`), this README, the MIT license, `composer.json`, and the schema
+resource files. Tests and the CLI are excluded. Extract it into a library
+directory and require its `autoload.php`. Composer can also load that
 entrypoint through the manifest's `autoload.files` declaration and load the two
 HTTP socket classes through its classmap. Version 0.0.1 is unpublished.
 
-Independent package verification installs the ZIP with Composer 2.10.3 and the
-same locked dependency graph. It runs the complete native suite against installed
-classes, checks package bytes and class origins, and checks README examples and
-the copied CLI's RPC and HTTP modes without paid requests. Core-only package
-import also works without Composer's autoloader or credentials. Composer
-validates the manifest; strict mode reports advisory warnings for the unpublished
-version field and the exact dependency pins required by this repository.
+Last verified in September 2026 on macOS arm64, and not covered by CI. At that
+time the full suite passed from source and from the ZIP installed with Composer
+2.10.3. Linux and Windows are unverified.
 
 ## Stream a provider turn
 

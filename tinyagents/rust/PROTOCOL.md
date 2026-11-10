@@ -23,7 +23,7 @@ native Agent core
 └── HTTP server
 ```
 
-The SDK and adapters must not contain independent model or tool loops. Python, TypeScript, Go, Rust, Zig, Java, Ruby, Elixir, C#, PHP, and Swift remain native implementations. No language runtime is required by another language.
+The SDK and adapters must not contain independent model or tool loops. Python, TypeScript, Go, Rust, Zig, C#, Java, PHP, and Elixir are native implementations. No language runtime is required by another language.
 
 The CLI entrypoint remains runnable where the language permits it. Imported SDKs
 and transport adapters share the same native core. Separate modules are useful
@@ -261,7 +261,7 @@ Authorization: Bearer <token>
 
 Session IDs are cryptographically random and are not credentials. One token owns every session in a v0.1 server. Multi-user ownership is outside scope.
 
-Local mode may use HTTP. Remote deployments must terminate HTTPS in a trusted reverse proxy. TinyAgent does not implement TLS independently in eleven languages.
+Local mode may use HTTP. Remote deployments must terminate HTTPS in a trusted reverse proxy. TinyAgent does not implement TLS itself.
 
 ## Durable sessions and compaction
 

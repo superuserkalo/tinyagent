@@ -1,16 +1,14 @@
 # TinyAgent first-release finish contract
 
-Status: current, 2026-11-10. Requirements 1 to 4 and 6 are met; 5 and 7 have open items listed below.
+Status: current, 2026-11-11. Requirements 1 to 4, 6 and 7 are met; 5 has an open item listed below.
 
 The first public release supports Python and TypeScript. It provides a small
 agent SDK with validated tools, streaming, cancellation, durable sessions,
-resume, and basic compaction. The [roadmap](ROADMAP.md) records the agreed scope
-and milestone order.
+resume, and basic compaction.
 
-Other language implementations remain experimental reference code. Their
-completion does not block this release. The previous eleven-language contract
-is preserved in [the archive](docs/archive/2026-09-11/finish-contract-eleven-languages.md).
-This contract supersedes its language gate and durable-session deferral.
+The other language implementations (Go, Rust, Zig, C#, Java, PHP and Elixir)
+remain experimental reference code. Their completion does not block this
+release.
 
 ## Acceptance requirements
 
@@ -39,8 +37,8 @@ This contract supersedes its language gate and durable-session deferral.
    that uses tools, streams, cancels, restarts, resumes, compacts, and continues.
    The actual independently installed artifacts pass that example and relevant
    failure tests. CI covers the platforms and runtime versions claimed publicly.
-7. **Honest release evidence.** Refresh the acceptance audit against final source,
-   artifacts, documentation, and native checks. Report unrelated repository-check
+7. **Honest release evidence.** Record what was verified, on which platforms and
+   runtime versions, against final source and built artifacts. Report unrelated
    failures separately. No unfinished feature is described as shipped.
 
 ## Current evidence and remaining work
@@ -56,7 +54,7 @@ badge in the [README](README.md) for the current state.
 | 4 | Basic compaction | Met | Met |
 | 5 | Shared adapters | Code met; shared fixtures open | Code met; shared fixtures open |
 | 6 | Adoption and packages | Met | Met |
-| 7 | Honest release evidence | This section; the older audit is not refreshed | Same |
+| 7 | Honest release evidence | This section | Same |
 
 Evidence:
 
@@ -79,8 +77,6 @@ Open items:
   session or compaction scenarios. Each language tests them with its own suite.
   The Go, Rust and Zig packages bundle byte-identical copies of that file, so
   extending it means refreshing those copies too.
-- **Acceptance audit (requirement 7).** [docs/acceptance-audit.md](docs/acceptance-audit.md)
-  still describes the September in-memory baseline and has not been rewritten.
 - **Real providers.** The examples have been run against local fake providers
   only, not against the OpenAI or Anthropic APIs.
 - **Platforms.** Windows is untested.

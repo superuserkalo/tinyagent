@@ -17,7 +17,7 @@ one loop.
   the task says to.
 - `PROTOCOL.md` is the contract every implementation follows.
 - `conformance/` holds the fixtures all languages share, and the runner.
-- `FINISH_CONTRACT.md` and `ROADMAP.md` define what the first release is.
+- `FINISH_CONTRACT.md` defines what the first release requires and where it stands.
 
 ## Commands
 
@@ -82,4 +82,4 @@ boundary in code comments or documentation. See [SECURITY.md](SECURITY.md).
 
 Branching, orchestration, plugins, predictive compaction, queues, steering, an
 approval interface, extra storage backends, TLS termination and multi-user
-ownership. See the roadmap before proposing any of them.
+ownership. Open an issue before proposing any of them.

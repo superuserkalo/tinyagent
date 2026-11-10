@@ -1,7 +1,11 @@
 # Zig schema validation
 
-Status: current, 2026-09-09. Acceptance is tracked in
-[the finish contract](../FINISH_CONTRACT.md).
+Status: written 2026-09-09 and last verified then, on macOS arm64. The
+[Zig implementation](../tinyagents/zig/README.md) is experimental and not in
+CI, so nothing here has been re-run since.
+
+This note explains why the Zig SDK validates tool schemas through a small Rust
+library, and which pure Zig and C++ validators were rejected.
 
 Zig's agent loop, tool handlers, providers, sessions, and transports remain Zig.
 `schema-native` statically links `jsonschema` 0.30.0 behind three C functions:
@@ -10,9 +14,9 @@ The interface passes byte slices and opaque handles; Rust collections, errors,
 and unwinding do not cross it. It links no other TinyAgent implementation.
 
 Cargo is a build dependency. Runtime execution does not require a Rust
-installation. The macOS arm64 tool example's `otool -L` output contains only
-`/usr/lib/libSystem.B.dylib`. Zig 0.16.0 and Rust 1.96.1 built and ran the example.
-Cross-platform builds remain unverified.
+installation. In September 2026, on macOS arm64, Zig 0.16.0 and Rust 1.96.1
+built and ran the tool example, and its `otool -L` output contained only
+`/usr/lib/libSystem.B.dylib`. Builds on other platforms are unverified.
 
 The selected validator already serves TinyAgent's Rust SDK. Its exact version
 and `serde_json` 1.0.151 are pinned; `Cargo.lock` fixes transitive versions.
@@ -44,20 +48,19 @@ process-level behavior for an exhausted native allocator.
   the inspected revision offers AGPL-3.0-or-later or a commercial license. It was
   not selected for this MIT-licensed SDK. It was not built or incorporated.
 
-The probes and downloaded candidates are isolated under
-`../../../.scratch/tmp/ta-zig-sdk.KYXMx0`, relative to this document.
-Previously declined validator downloads for the other six SDKs were not retried.
+The probes and the downloaded candidates were kept outside the repository and
+are not part of it.
 
 ## Regression coverage
 
-The shared argument fixture now adds composed properties with
-`unevaluatedProperties`, local dynamic references through a recursive tree, and
-large integral exponent values. Python, TypeScript, Go, Rust, and Zig pass those
-same cases. These examples supplement the validator's declared dialect support;
-they do not constitute a complete independent JSON Schema certification.
+The shared argument fixture,
+[`conformance/tool_arguments.json`](../conformance/tool_arguments.json),
+includes composed properties with `unevaluatedProperties`, local dynamic
+references through a recursive tree, and large integral exponent values. Every
+language's tests read the same fixture. The cases supplement the validator's declared dialect support; they
+are not a complete independent JSON Schema certification.
 
-Six direct tool groups cover shared schemas, invalid construction, ownership,
-annotations, ordinary failures, output bounds, and native cancellation. Four
-agent groups cover sequential recovery, callback failure, duplicate names, and
-tool start/end pairing during cancellation. The existing core, session, provider,
-RPC, and HTTP suites also pass. Guarded Bash and coding CLI integration remain open.
+In `tinyagents/zig/`, `test/tools.zig` covers the shared schema cases, invalid
+construction, ownership, annotations, ordinary failures, output bounds, and
+native cancellation. `test/tool_loop.zig` covers sequential recovery, callback
+failure, duplicate names, and tool start/end pairing during cancellation.

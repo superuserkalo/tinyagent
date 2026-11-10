@@ -1,9 +1,12 @@
 # Rust SDK
 
-Status: importable core, schema validation, streaming OpenAI and Anthropic
-providers, cancellable Bash, CLI, RPC, and HTTP implemented. All sixty source tests
-pass, including provider and server TCP checks. Package and final acceptance
-remain tracked in the workspace's `FINISH_CONTRACT.md`.
+Status: experimental reference implementation. It has an importable core,
+schema validation, streaming OpenAI and Anthropic providers, cancellable Bash,
+a coding CLI, RPC, and HTTP. Sessions are held in memory: durable sessions,
+resume, recovery and compaction are not implemented, so the "Durable sessions
+and compaction" section of the protocol does not apply here. This crate is not
+in CI. Its checks were last run in September 2026 on macOS arm64 with Rust
+1.96.1 and have not been re-run since.
 
 The crate imports as `tiny_agent`. The `tiny_agent.rs` entrypoint handles
 signals and terminal I/O; `cli::run` connects the CLI to the async SDK.
@@ -21,14 +24,14 @@ cargo run --locked -- serve --port 8080
 
 The example completes a native tool loop without credentials or network access.
 The crate includes its test fixtures and protocol reference, so the same tests
-and examples run from an extracted `cargo package` archive. Local package
-verification and the packaged example and CLI self-test pass.
-Checks have run with Rust 1.96.1. Direct dependencies use exact versions, and the
+and examples run from an extracted `cargo package` archive.
+Direct dependencies use exact versions, and the
 lockfile records transitive versions. The schema validator has external loading
 disabled even when a consuming application enables its HTTP or file features.
 
-The workspace's `conformance/` directory and `PROTOCOL.md` are authoritative.
-Its runner verifies the bundled copies byte for byte before running Rust checks.
+The repository's `conformance/` directory and root `PROTOCOL.md` are
+authoritative. The shared runner verifies the bundled copies byte for byte
+before running Rust checks.
 After changing those shared files, refresh the copies from this directory:
 
 ```sh
@@ -111,7 +114,7 @@ cooperative cleanup. Dropping the handle requests shutdown without waiting.
 The CLI accepts `serve --host IP --port PORT --token TOKEN --allow-remote`;
 `TINYAGENT_TOKEN` supplies its default token.
 
-The five routes and payloads follow [PROTOCOL.md](PROTOCOL.md). HTTP and
+The five baseline routes and payloads follow [PROTOCOL.md](PROTOCOL.md). HTTP and
 RPC share session history and cancellation. Hyper handles HTTP/1 framing, with
 one request per connection. A bounded event channel applies backpressure.
 The terminal callback waits for the connection to finish writing before history
@@ -127,12 +130,14 @@ request serialization, API-specific parsers, and a shared bounded SSE reader.
 lifecycle; `rpc.rs` owns JSONL commands; `rpc/output.rs` owns the bounded writer
 and delivery receipts; `lines.rs` preserves partial input across cancelled reads.
 `http/` separates routes and session ownership, HTTP body streaming, and
-listener/connection lifetime. The tests consume the shared argument, SSE, and RPC
-fixtures. Sixty source tests pass, including
-real RPC subprocesses, Bash cancellation, and HTTP/1 over bounded in-memory
-streams. RPC tests also cover blocked replies and acknowledgements, queue
-overflow, held or failed final flushes, and slow cooperative cleanup. The compiled
-CLI exits on EOF and SIGINT with full RPC stdout, and on SIGINT with full
-interactive stdout or stderr, on macOS. Five mandatory TCP tests also pass:
-two provider checks and three SDK/CLI server checks. The workspace's
-`FINISH_CONTRACT.md` records current evidence and remaining acceptance work.
+listener/connection lifetime.
+
+The tests consume the shared argument, SSE, and RPC fixtures. They include real
+RPC subprocesses, Bash cancellation, HTTP/1 over bounded in-memory streams, and
+tests that bind loopback sockets for the providers, the SDK server and the CLI.
+RPC tests also cover blocked replies and acknowledgements, queue overflow, held
+or failed final flushes, and slow cooperative cleanup.
+
+Last verified in September 2026 on macOS arm64, and not covered by CI. At that
+time `cargo test --locked` and the Clippy, example and self-test commands above
+passed. Linux and Windows are unverified.

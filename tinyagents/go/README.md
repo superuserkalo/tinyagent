@@ -1,8 +1,11 @@
 # Go SDK
 
-Status: native core, streaming providers, CLI, RPC, and HTTP implemented. The
-complete source race suite passes, including real TCP. Package and final
-acceptance are tracked in the TinyAgent workspace's `FINISH_CONTRACT.md`.
+Status: experimental reference implementation. It has the native core, both
+streaming providers, a coding CLI, RPC, and HTTP. Sessions are held in memory:
+durable sessions, resume, recovery and compaction are not implemented, so the
+"Durable sessions and compaction" section of the protocol does not apply here.
+This package is not in CI. Its checks were last run in September 2026 on macOS
+arm64 and have not been re-run since.
 
 Use Go 1.26.4 or newer. The module imports as `tinyagent` within this directory.
 An application in a separate module can use a local `replace` directive while
@@ -21,8 +24,8 @@ require no credentials. The complete test command includes local TCP fixtures;
 restricted environments report their inability to bind as test failures.
 
 The module includes its conformance fixtures and protocol reference, so its full
-suite runs independently of the TinyAgent workspace. The workspace runner checks
-these copies byte for byte before dispatching Go. After changing shared assets,
+suite runs outside this repository. The shared runner checks these copies byte
+for byte before dispatching Go. After changing shared assets,
 refresh them from this directory:
 
 ```sh
@@ -76,11 +79,11 @@ before returning. Keep the supplied files open and unused elsewhere during RPC.
 Other inputs must release pending reads on `Close`. Other writers must return
 from `Write` or release it on `Close`; a fatal output error may close them. RPC
 joins its writer, input-close callback, and agent work before returning. Callers
-must consume output concurrently. Native pipe and subprocess checks run on macOS;
-the Windows path retains cooperative caller-supplied I/O.
+must consume output concurrently. The native pipe and subprocess checks have
+only been run on macOS; the Windows path retains cooperative caller-supplied I/O.
 
-`Serve(agent, HTTPOptions{Address: "127.0.0.1:8080"})` starts the five routes in
-[PROTOCOL.md](PROTOCOL.md). `server.URL()` reports its address; port zero
+`Serve(agent, HTTPOptions{Address: "127.0.0.1:8080"})` starts the five baseline
+routes in [PROTOCOL.md](PROTOCOL.md). `server.URL()` reports its address; port zero
 selects an available port. Call `server.Close()` when finished. `server.Wait()`
 waits for the listener and active runs to stop.
 
@@ -121,8 +124,8 @@ The implementation is split by responsibility:
 - `internal/nativeio/` shares borrowed POSIX file handling between RPC and the
   interactive console.
 
-The standalone `tiny_agent.go` delegates to `cli.Run`. The TinyAgent root's
-`go.work` keeps this entrypoint runnable without changing the working directory:
+The standalone `tiny_agent.go` delegates to `cli.Run`. The `go.work` file at the
+repository root keeps this entrypoint runnable from there:
 
 ```sh
 go run tinyagents/go/tiny_agent.go
@@ -142,7 +145,7 @@ blocking modes before returning; the caller's files stay open. Keep the supplied
 files open and unused elsewhere while the console owns their I/O. Shared stdout
 and stderr and regular-file redirection are supported. Native checks cover
 Ctrl-C during requests, Bash, and stalled writes, plus broken-output cleanup.
-They run on macOS; Linux execution remains unverified.
+They have only been run on macOS; Linux is unverified.
 
 Custom input streams must support `Close` to release a pending read. Custom
 writers must return or cooperate with cancellation. The console waits for
@@ -152,8 +155,9 @@ caller-supplied I/O; guarded Bash requires POSIX.
 To run the CLI from other working directories, build or install `./cmd/tinyagent`
 from this module. Bash runs in the directory where the resulting command starts.
 
-The complete source race suite passes on macOS, including all three TCP groups.
-A copied module also passed an isolated import and tool-loop
-smoke, native console and RPC backpressure checks, and CLI self-tests, with
-workspace resolution off. Both compiled CLI entrypoints pass idle and stalled
-RPC output shutdown checks for EOF and SIGINT.
+## Verification
+
+Last verified in September 2026 on macOS arm64, and not covered by CI. At that
+time `go test -race ./...` passed, including the tests that bind loopback
+sockets, and a copy of the module passed the same suite with Go workspace resolution disabled.
+Linux and Windows are unverified.
