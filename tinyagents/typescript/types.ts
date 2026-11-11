@@ -399,6 +399,8 @@ export interface RunHooks {
   /** Compact before a request if needed. `usage` is what the summary request cost. */
   prepare?: (history: Item[]) => AsyncGenerator<CompactionEventData, { history: Item[]; usage?: Usage }>;
   resume?: ResumeState;
+  /** Calls host code: a tool handler or a beforeTool or afterTool hook. The Session uses it to know when that code calls it back. */
+  host?: <T>(call: () => T) => T;
 }
 
 export class ProviderError extends Error {
@@ -477,4 +479,65 @@ export function isAbortError(error: unknown): boolean {
 
 export function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) throw abortError();
+}
+
+// What follows stands in for Node APIs, so that everything a browser can run imports nothing from Node.
+
+/** The length of `text` in UTF-8 bytes, a lone surrogate counting as U+FFFD: what Buffer.byteLength returns. */
+export function utf8Length(text: string): number {
+  let bytes = 0;
+  for (let index = 0; index < text.length; index++) {
+    const unit = text.charCodeAt(index);
+    if (unit < 0x80) bytes += 1;
+    else if (unit < 0x800) bytes += 2;
+    else if (unit >= 0xd800 && unit <= 0xdbff && index + 1 < text.length &&
+        text.charCodeAt(index + 1) >= 0xdc00 && text.charCodeAt(index + 1) <= 0xdfff) {
+      bytes += 4;
+      index += 1;
+    } else bytes += 3;
+  }
+  return bytes;
+}
+
+/** The first `length` bytes of `parts` joined into one array. */
+export function concatBytes(parts: Uint8Array[], length: number): Uint8Array {
+  const joined = new Uint8Array(length);
+  let offset = 0;
+  for (const part of parts) {
+    if (offset >= length) break;
+    const piece = part.subarray(0, length - offset);
+    joined.set(piece, offset);
+    offset += piece.length;
+  }
+  return joined;
+}
+
+/** An environment variable, where the runtime has them. A browser has none. */
+export function environment(name: string): string | undefined {
+  return (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.[name];
+}
+
+/** 32 random hex digits: a version 4 UUID without its dashes. */
+export function randomId(): string {
+  // getRandomValues, unlike randomUUID, also works in a page that is not served over HTTPS.
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/** Wait `milliseconds`, or reject with an AbortError as soon as `signal` fires. */
+export function sleep(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(abortError());
+    const abort = () => {
+      clearTimeout(timer);
+      reject(abortError());
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    }, milliseconds);
+    signal?.addEventListener("abort", abort, { once: true });
+  });
 }

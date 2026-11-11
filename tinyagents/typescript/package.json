@@ -24,8 +24,16 @@
   "types": "./dist/sdk.d.ts",
   "exports": {
     ".": {
+      "browser": {
+        "types": "./dist/browser.d.ts",
+        "default": "./dist/browser.js"
+      },
       "types": "./dist/sdk.d.ts",
       "default": "./dist/sdk.js"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "default": "./dist/browser.js"
     },
     "./package.json": "./package.json"
   },
@@ -40,6 +48,7 @@
   },
   "devDependencies": {
     "@types/node": "22.20.1",
+    "esbuild": "0.28.2",
     "typescript": "5.9.3"
   },
   "engines": {

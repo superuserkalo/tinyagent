@@ -6,6 +6,8 @@ import {
   errorMessage,
   abortError,
   throwIfAborted,
+  utf8Length,
+  environment,
   type Item,
   type EventTransport,
   type Provider,
@@ -129,7 +131,7 @@ export class OpenAIProvider implements Provider {
   }
 
   private async *httpEvents(payload: Item, signal: AbortSignal): AsyncGenerator<Item> {
-    const key = this.options.apiKey ?? process.env.OPENAI_API_KEY;
+    const key = this.options.apiKey ?? environment("OPENAI_API_KEY");
     if (!key && !Object.keys(this.options.headers ?? {}).some((name) => name.toLowerCase() === "authorization"))
       throw new ProviderError("OPENAI_API_KEY is not set");
     yield* httpSseEvents(
@@ -179,7 +181,7 @@ function openAITurn(output: Item[]): ProviderTurn {
       const raw = stringValue(item, "arguments");
       if (ids.has(callId)) throw new ProviderError("duplicate OpenAI tool call");
       ids.add(callId);
-      if (Buffer.byteLength(raw, "utf8") > MAX_SSE_BYTES)
+      if (utf8Length(raw) > MAX_SSE_BYTES)
         throw new ProviderError("tool arguments exceed their byte limit");
       let arguments_: Item;
       try {

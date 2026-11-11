@@ -1,10 +1,9 @@
-import { AsyncLocalStorage } from "node:async_hooks";
-import { createHash } from "node:crypto";
-import type { Agent } from "./sdk.ts";
-import { FencedError, FileStorage, MemoryStorage, SessionBusyError, SessionCorruptionError, type Storage } from "./storage.ts";
+import type { Agent } from "./agent.ts";
+import { FencedError, MemoryStorage, SessionBusyError, SessionCorruptionError, type Storage } from "./storage.ts";
 import { MAX_JSONL_LINE_BYTES, MAX_TOOL_OUTPUT_BYTES } from "./protocol.ts";
+import { sha256Hex } from "./sha256.ts";
 import { isItem, isPromise, assistantText, throwIfAborted, abortError, errorMessage, wellFormed, guarded, checkDepth,
-  checkRunOptions, StorageError, CANCEL_GRACE_MS, type Item, type RunOptions,
+  checkRunOptions, utf8Length, StorageError, CANCEL_GRACE_MS, type Item, type RunOptions,
   type RunResult, type AgentEvent, type CompactionEventData, type ToolCall, type Usage, type PendingPause, type Content, type RunFailure } from "./types.ts";
 
 export class RecoveryRequiredError extends Error {}
@@ -46,7 +45,7 @@ export interface ContextBudget {
 export interface SessionOptions {
   /** Where the session is kept. Default: memory that belongs to this Session alone. */
   storage?: Storage;
-  /** Shorthand for `storage: new FileStorage(directory)`. */
+  /** Shorthand for `storage: new FileStorage(directory)`. Node only: the Session exported by the browser entry refuses it. */
   directory?: string;
   sessionId?: string;
   /** Open the stored session `sessionId` instead of creating one. */
@@ -112,7 +111,45 @@ function digest(value: unknown): string {
     if (isItem(item)) return Object.fromEntries(Object.keys(item).sort().map((key) => [key, canonical(item[key])]));
     return item;
   };
-  return createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
+  return sha256Hex(JSON.stringify(canonical(value)));
+}
+
+interface ContextStore {
+  run<T>(store: true, call: () => T): T;
+  getStore(): true | undefined;
+}
+
+/**
+ * Marks host code this session is running, so that close() called from it
+ * fails at once instead of waiting for a run that waits for the caller.
+ * Node's AsyncLocalStorage follows the mark across awaits. Where there is none,
+ * as in a browser, the mark covers each call while it runs synchronously, so a
+ * call back made after an await is not recognised: close() then cancels the run
+ * and returns after the grace period instead of failing at once.
+ */
+class HostMark {
+  private depth = 0;
+  private readonly context = asyncContext();
+
+  run<T>(call: () => T): T {
+    this.depth += 1;
+    try {
+      return this.context ? this.context.run(true, call) : call();
+    } finally {
+      this.depth -= 1;
+    }
+  }
+
+  get active(): boolean {
+    return this.depth > 0 || this.context?.getStore() === true;
+  }
+}
+
+/** Node's AsyncLocalStorage, found at run time so that nothing here imports Node. */
+function asyncContext(): ContextStore | undefined {
+  const runtime = (globalThis as { process?: { getBuiltinModule?: (name: string) => unknown } }).process;
+  const hooks = runtime?.getBuiltinModule?.("node:async_hooks") as { AsyncLocalStorage?: new () => ContextStore } | undefined;
+  return hooks?.AsyncLocalStorage ? new hooks.AsyncLocalStorage() : undefined;
 }
 
 function usageOf(value: unknown): Usage | undefined {
@@ -158,7 +195,7 @@ export class Session {
   /** The append in flight on an asynchronous store. The next one waits for it. */
   private writing: Promise<unknown> | undefined;
   /** Marks code this session is running: its own handlers, hooks and event callbacks. */
-  private readonly inside = new AsyncLocalStorage<true>();
+  private readonly inside = new HostMark();
   private active: { controller: AbortController; signal: AbortSignal; done: Promise<void>; finish: () => void;
     events?: AsyncGenerator<AgentEvent, RunResult> } | undefined;
 
@@ -175,7 +212,8 @@ export class Session {
         !(this.budget.responseReserve < this.budget.maxTokens) ||
         !Number.isInteger(this.budget.keepTurns ?? 2) || (this.budget.keepTurns ?? 2) < 1))
       throw new Error("budget needs a positive reserve below maxTokens and keepTurns >= 1");
-    this.storage = options.storage ?? (options.directory !== undefined ? new FileStorage(options.directory) : new MemoryStorage());
+    this.storage = options.storage ??
+      (options.directory !== undefined ? (new.target as typeof Session).directoryStorage(options.directory) : new MemoryStorage());
     const opening = options.resume
       ? this.restore(this.storage.load(this.id))
       : this.append({ type: "session", sessionId: this.id, configuration: this.configuration() });
@@ -184,12 +222,9 @@ export class Session {
     if (!isPromise(opening)) this.opened = true;
   }
 
-  static open(agent: Agent, directory: string, sessionId: string, budget?: ContextBudget): Session {
-    return new Session(agent, { directory, sessionId, resume: true, budget });
-  }
-
-  static list(directory: string): string[] {
-    return new FileStorage(directory).list();
+  /** The store behind the `directory` option. Files need Node: the Session the Node entry exports provides it. */
+  protected static directoryStorage(_directory: string): Storage {
+    throw new Error("the directory option needs FileStorage, which runs only in Node; pass storage instead");
   }
 
   get history(): Item[] { return structuredClone(this.transcript); }
@@ -230,7 +265,7 @@ export class Session {
     const page: Item[] = [];
     let bytes = 0;
     for (const item of source.slice(offset, offset + limit)) {
-      const length = Buffer.byteLength(JSON.stringify(item));
+      const length = utf8Length(JSON.stringify(item));
       if (bytes + length > MAX_PAGE_BYTES) {
         if (!page.length) throw new Error("record exceeds transport inspection limit; inspect it through the SDK");
         break;
@@ -306,7 +341,7 @@ export class Session {
     let bytes = 0;
     const later = all.filter((event) => (event.cursor ?? 0) > after);
     for (const event of later.slice(0, limit)) {
-      bytes += Buffer.byteLength(JSON.stringify(event));
+      bytes += utf8Length(JSON.stringify(event));
       if (bytes > MAX_PAGE_BYTES && events.length) break;
       events.push(structuredClone(event));
     }
@@ -595,7 +630,7 @@ export class Session {
         : "result" in given ? { result: given.result } : undefined;
       if (open?.pause && !answer) throw new TypeError("the run is paused; resume it with a result or an error");
       if (answer && !open?.pause) throw new TypeError("a result or error can only be given to a paused run");
-      if (answer && "result" in answer && Buffer.byteLength(JSON.stringify(answer.result) ?? "") > MAX_TOOL_OUTPUT_BYTES)
+      if (answer && "result" in answer && utf8Length(JSON.stringify(answer.result) ?? "") > MAX_TOOL_OUTPUT_BYTES)
         throw new TypeError(`result exceeds ${MAX_TOOL_OUTPUT_BYTES} UTF-8 bytes`);
       // A resumed run goes on with the options it was started with, unless this call gives its own.
       const stored: Item = {};
@@ -618,6 +653,7 @@ export class Session {
       events = this.agent.stream(prompt ?? "", this.context(), { ...options, signal, runId }, {
         sessionId: this.id,
         record: this.append,
+        host: (call) => this.inside.run(call),
         prepare: (history) => this.prepare(history, signal),
         resume: open && { items: open.items, calls: structuredClone(calls),
           pending: intent && { sequence: Number(intent.sequence), rerun: !answer && this.rerunnable(intent),
@@ -629,7 +665,7 @@ export class Session {
       const loop = events;
       while (true) {
         // Handlers, hooks and providers run inside this call. The mark lets close() refuse them.
-        const next = await this.inside.run(true, () => loop.next());
+        const next = await this.inside.run(() => loop.next());
         if (next.done) {
           throwIfAborted(signal);
           await this.append({ type: "run_commit", runId, text: next.value.text, usage: next.value.usage,
@@ -692,7 +728,7 @@ export class Session {
         // The callback is host code: it is marked as running inside the session and never waited for past a cancellation.
         const event = next.value;
         const callback = options.onEvent;
-        if (callback) await guarded(this.inside.run(true, () => callback(event)), this.active?.signal ?? new AbortController().signal);
+        if (callback) await guarded(this.inside.run(() => callback(event)), this.active?.signal ?? new AbortController().signal);
       }
     } catch (error) { failed = true; throw error; }
     finally {
@@ -808,7 +844,7 @@ export class Session {
    * event callback throws SessionBusyError at once.
    */
   async close(): Promise<void> {
-    if (this.inside.getStore()) throw new SessionBusyError("session_busy: close() was called from inside this session's own run");
+    if (this.inside.active) throw new SessionBusyError("session_busy: close() was called from inside this session's own run");
     this.closed = true;
     const active = this.active;
     active?.controller.abort();

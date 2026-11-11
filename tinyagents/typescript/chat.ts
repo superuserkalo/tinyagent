@@ -1,4 +1,4 @@
-import { ProviderError, isItem, isContentParts, imageUrl, errorMessage, abortError, throwIfAborted, assistantText, type Item, type EventTransport,
+import { ProviderError, isItem, isContentParts, imageUrl, errorMessage, abortError, throwIfAborted, assistantText, environment, type Item, type EventTransport,
   type Provider, type ProviderRequest, type ProviderEvent, type ProviderTurn, type ToolCall } from "./types.ts";
 import { Arguments, httpSseEvents, indexValue, objectArray, parseObject, type HttpRequestOptions } from "./sse.ts";
 
@@ -100,7 +100,7 @@ export class ChatCompletionsProvider implements Provider {
 
   private async *httpEvents(payload: Item, signal: AbortSignal): AsyncGenerator<Item> {
     // Many compatible servers take no key. An empty apiKey means: send none.
-    const key = this.options.apiKey ?? process.env.OPENAI_API_KEY;
+    const key = this.options.apiKey ?? environment("OPENAI_API_KEY");
     yield* httpSseEvents(
       this.options.endpoint ?? (this.options.baseUrl ?? OPENAI_BASE).replace(/\/+$/, "") + "/chat/completions",
       payload,

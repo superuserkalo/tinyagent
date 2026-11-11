@@ -21,8 +21,9 @@ for example). API keys are read when a request starts.
 
 ## Install
 
-TinyAgent needs Node.js 22.18 or later. It is not on the npm registry yet, so
-build the package from a clone and install the tarball:
+TinyAgent needs Node.js 22.18 or later, or a browser through
+[`tiny-agent-sdk/browser`](#running-in-a-browser). It is not on the npm
+registry yet, so build the package from a clone and install the tarball:
 
 ```sh
 git clone https://github.com/superuserkalo/tinyagent.git
@@ -580,6 +581,123 @@ node examples/session.ts   # reopens the session, continues, compacts, continues
 `example.test.ts` runs that file as two real processes against a local stand-in
 for the OpenAI API, so `npm test` exercises it without a key or a network.
 
+## Running in a browser
+
+The agent loop, `Session`, the providers and the storage contract also run in
+a web page. Import them from `tiny-agent-sdk/browser`:
+
+```typescript
+import { Agent, Session, Tool, AnthropicProvider } from "tiny-agent-sdk/browser";
+```
+
+That entry imports nothing from Node. A bundler that resolves the `browser`
+condition (esbuild, Vite, webpack) also picks it for a plain
+`"tiny-agent-sdk"` import. The package ships ES modules and depends on `ajv`,
+which is CommonJS, so bundle the page rather than loading the files directly:
+
+```sh
+npx esbuild app.ts --bundle --platform=browser --format=esm --outfile=app.js
+```
+
+It needs `fetch`, `crypto.getRandomValues`, `TextEncoder` and
+`AbortSignal.any`: Chrome 116, Firefox 124, Safari 17.4 or later. Tools
+compile their JSON Schema with generated code, so a Content Security Policy
+must allow `'unsafe-eval'`.
+
+**Bring your own storage.** A browser has no files, so `FileStorage`, the
+`directory` option, `Session.open` and `Session.list` are not in this entry.
+Without a `storage` a session lives in memory and is gone with the tab. To
+resume a run after a reload, implement the four operations of
+[Storage](#storage) over IndexedDB and open the session again with
+`resume: true`. A minimal version:
+
+```typescript
+import { FencedError, type Item, type Storage } from "tiny-agent-sdk/browser";
+
+/** Records keyed [sessionId, sequence]. One transaction checks the count and writes. */
+class IndexedDBStorage implements Storage {
+  private readonly db: Promise<IDBDatabase>;
+
+  constructor(name = "tinyagent") {
+    const opening = indexedDB.open(name, 1);
+    opening.onupgradeneeded = () => opening.result.createObjectStore("records");
+    this.db = done(opening);
+  }
+
+  private async store(mode: IDBTransactionMode): Promise<IDBObjectStore> {
+    return (await this.db).transaction("records", mode, { durability: "strict" }).objectStore("records");
+  }
+
+  async load(sessionId: string): Promise<Item[] | undefined> {
+    const records = await done((await this.store("readonly")).getAll(IDBKeyRange.bound([sessionId, 0], [sessionId, Infinity])));
+    return records.length ? records : undefined;
+  }
+
+  async append(sessionId: string, expected: number, record: Item): Promise<number> {
+    const store = await this.store("readwrite");
+    const count = await done(store.count(IDBKeyRange.bound([sessionId, 0], [sessionId, Infinity])));
+    if (count !== expected) throw new FencedError();
+    store.add({ ...record, sequence: expected + 1 }, [sessionId, expected + 1]);
+    await new Promise((resolve, reject) => {
+      store.transaction.oncomplete = resolve;
+      store.transaction.onerror = store.transaction.onabort = () => reject(store.transaction.error);
+    });
+    return expected + 1;
+  }
+
+  async list(): Promise<string[]> {
+    const keys = await done((await this.store("readonly")).getAllKeys()) as [string, number][];
+    return keys.filter(([, sequence]) => sequence === 1).map(([sessionId]) => sessionId).sort();
+  }
+
+  release(): void {}
+}
+
+function done<T>(request: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+const session = new Session(agent, { storage: new IndexedDBStorage(), sessionId, resume: true });
+await session.ready;
+if (session.resumable) await session.resume();
+```
+
+It passes `checkStorage`. Two tabs on one session are kept apart by the
+conditional append, as two processes are: the one that falls behind gets
+`FencedError`.
+
+**Keys.** A page calls the provider's API directly, so the API key is in the
+page. That is fine for a user's own key on their own device, typed in by them
+and kept in their browser. Never put a key in a page that others can load: it
+can be read by anyone who opens it. Anthropic answers a browser only when the
+request says it knows this:
+
+```typescript
+const provider = new AnthropicProvider({
+  apiKey: userKey,
+  headers: { "anthropic-dangerous-direct-browser-access": "true" },
+});
+```
+
+The OpenAI and Chat Completions providers need no extra header for OpenAI
+itself; another OpenAI-compatible server must allow cross-origin requests. No
+provider sets a header that a browser forbids a page to set.
+
+**Node only.** `FileStorage`, `bashTool` and `runBash`, `runRpc` and
+`RpcSession`, `serve`, and the CLI (`runCli`) need Node and are exported only
+by the main entry. API keys are never read from the environment in a browser:
+pass `apiKey`.
+
+One difference remains. Calling `session.close()` from inside that session's
+own tool handler, hook or event callback fails at once with
+`SessionBusyError`. In Node that is recognised however deep in the callback
+the call is, through `AsyncLocalStorage`. A browser has nothing like it, so
+there it is recognised only before the callback's first `await`. After one,
+`close()` cancels the run and returns after a grace period of about a second.
+
 ## The coding CLI
 
 The package installs a `tinyagent` command: a coding agent with one guarded
@@ -817,10 +935,15 @@ The sources run directly under Node, without a build step.
 
 | File | What it holds |
 | --- | --- |
-| `sdk.ts` | The library: `Agent`, its loop, the public exports, and `runCli` |
+| `sdk.ts` | The package's main entry, for Node: the public exports |
+| `browser.ts` | The browser entry, `tiny-agent-sdk/browser`: everything that does not need Node |
+| `agent.ts` | `Agent` and its loop |
 | `tiny_agent.ts` | The command-line entry file. Nothing else asks whether it is the program |
+| `cli.ts` | `runCli`, the coding CLI |
 | `session.ts` | `Session`: history, resume, recovery, events, and compaction |
-| `storage.ts` | `Storage`, `FileStorage`, `MemoryStorage`, and `checkStorage` |
+| `storage.ts` | `Storage`, `MemoryStorage`, and `checkStorage` |
+| `file_storage.ts` | `FileStorage`, and the `Session` that accepts a `directory` (Node only) |
+| `sha256.ts` | The SHA-256 the session's journal digests use |
 | `bash.ts` | The guarded Bash tool |
 | `scripted.ts` | `ScriptedProvider`, the fake model for tests |
 | `types.ts` | `Tool`, events, and shared types |

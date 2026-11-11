@@ -1,4 +1,4 @@
-import { ProviderError, isItem, errorMessage, abortError, throwIfAborted, type Item } from "./types.ts";
+import { ProviderError, isItem, errorMessage, abortError, throwIfAborted, utf8Length, concatBytes, type Item } from "./types.ts";
 
 export const MAX_SSE_BYTES = 1_048_576;
 
@@ -21,7 +21,7 @@ export class Arguments {
   private bytes = 0;
 
   append(value: string): void {
-    const added = Buffer.byteLength(value, "utf8");
+    const added = utf8Length(value);
     if (added > MAX_SSE_BYTES - this.bytes) throw new ProviderError("tool arguments exceed their byte limit");
     this.parts.push(value);
     this.bytes += added;
@@ -139,7 +139,7 @@ export async function* httpSseEvents(
         bytes += part.length;
       }
       // An error body may echo anything, the request included. It is reported in part only.
-      const detail = new TextDecoder().decode(Buffer.concat(parts, bytes)).slice(0, 500);
+      const detail = new TextDecoder().decode(concatBytes(parts, bytes)).slice(0, 500);
       throw new ProviderError("API error " + response.status + ": " + detail, {
         retryable: [429, 500, 502, 503, 504].includes(response.status),
         retryAfter: retryAfterSeconds(response.headers.get("retry-after")),
@@ -185,7 +185,7 @@ async function* sseEvents(reader: ReadableStreamDefaultReader<Uint8Array>, signa
     } else if (line === "data" || line.startsWith("data:")) {
       let value = line === "data" ? "" : line.slice(5);
       if (value.startsWith(" ")) value = value.slice(1);
-      bytes += Buffer.byteLength(value, "utf8") + (data.length ? 1 : 0);
+      bytes += utf8Length(value) + (data.length ? 1 : 0);
       if (bytes > MAX_SSE_BYTES) throw new ProviderError("SSE event exceeds its byte limit");
       data.push(value);
     }
@@ -210,7 +210,7 @@ async function* sseLines(reader: ReadableStreamDefaultReader<Uint8Array>, signal
     const chunk = await reader.read();
     throwIfAborted(signal);
     if (chunk.done) {
-      if (bytes) yield decoder.decode(Buffer.concat(parts, bytes)).replace(/\r$/, "");
+      if (bytes) yield decoder.decode(concatBytes(parts, bytes)).replace(/\r$/, "");
       return;
     }
     let start = 0;
@@ -222,7 +222,7 @@ async function* sseLines(reader: ReadableStreamDefaultReader<Uint8Array>, signal
       if (bytes > MAX_SSE_BYTES) throw new ProviderError("SSE line exceeds its byte limit");
       if (part.length) parts.push(part);
       if (newline < 0) break;
-      yield decoder.decode(Buffer.concat(parts, bytes)).replace(/\r$/, "");
+      yield decoder.decode(concatBytes(parts, bytes)).replace(/\r$/, "");
       parts = [];
       bytes = 0;
       start = newline + 1;

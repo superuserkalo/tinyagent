@@ -5,6 +5,8 @@ import {
   errorMessage,
   abortError,
   throwIfAborted,
+  utf8Length,
+  environment,
   type Item,
   type EventTransport,
   type Provider,
@@ -175,7 +177,7 @@ export class AnthropicProvider implements Provider {
         const arguments_ = objectValue(value.input, "tool arguments");
         if (ids.has(callId)) throw new ProviderError("duplicate Anthropic tool call");
         ids.add(callId);
-        if (Buffer.byteLength(JSON.stringify(arguments_), "utf8") > MAX_SSE_BYTES)
+        if (utf8Length(JSON.stringify(arguments_)) > MAX_SSE_BYTES)
           throw new ProviderError("tool arguments exceed their byte limit");
         toolCalls.push({ callId, name, arguments: arguments_ });
       } else if (value.type === "text") {
@@ -192,7 +194,7 @@ export class AnthropicProvider implements Provider {
   }
 
   private async *httpEvents(payload: Item, signal: AbortSignal): AsyncGenerator<Item> {
-    const key = this.options.apiKey ?? process.env.ANTHROPIC_API_KEY;
+    const key = this.options.apiKey ?? environment("ANTHROPIC_API_KEY");
     if (!key && !Object.keys(this.options.headers ?? {}).some((name) => name.toLowerCase() === "x-api-key"))
       throw new ProviderError("ANTHROPIC_API_KEY is not set");
     yield* httpSseEvents(
