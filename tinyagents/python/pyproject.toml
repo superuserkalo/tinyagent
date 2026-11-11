@@ -42,6 +42,8 @@ py-modules = [
     "tinyagent_http_body",
     "tinyagent_openai",
     "tinyagent_anthropic",
+    "tinyagent_chat",
+    "tinyagent_testing",
     "tinyagent_sse",
     "tinyagent_rpc",
     "tinyagent_rpc_io",

@@ -28,7 +28,7 @@ test(
     t.after(() => fixture.dispose());
     const health = await fixture.send("GET", "/health");
     assert.equal(health.statusCode, 200);
-    assert.deepEqual(await json(health), { status: "ok", protocolVersion: 1 });
+    assert.deepEqual(await json(health), { status: "ok", protocolVersion: 2 });
     const first = await fixture.session();
     const second = await fixture.session();
     assert.notEqual(first, second);
@@ -62,7 +62,7 @@ test(
   },
 );
 
-test("HTTP waits for final framing before committing history", { timeout: 5000 }, async (t) => {
+test("G05 F21 HTTP commits and releases the run before the final framing reaches the client", { timeout: 5000 }, async (t) => {
   const histories: Item[][] = [];
   const fixture = new HttpFixture(
     new Agent({
@@ -100,9 +100,10 @@ test("HTTP waits for final framing before committing history", { timeout: 5000 }
   );
   try {
     await ending.promise;
-    const busy = await fixture.prompt(id, "too early");
-    assert.equal(busy.statusCode, 409);
-    await body(busy);
+    // The run is recorded and the session idle before its last line is delivered: the next prompt is accepted.
+    const next = await fixture.prompt(id, "at once");
+    assert.equal(next.statusCode, 200);
+    await body(next);
   } finally {
     release.resolve();
   }
@@ -111,7 +112,7 @@ test("HTTP waits for final framing before committing history", { timeout: 5000 }
   await body(recovered);
   assert.deepEqual(
     histories.map((history) => history.length),
-    [1, 3, 3],
+    [1, 3, 5, 7],
   );
 });
 
@@ -313,7 +314,8 @@ for (const stop of ["delete", "disconnect"] as const) {
         return response;
       });
       await aborted.promise;
-      await delay(1100);
+      // The handler is given time to clean up after cancellation (G24 bounds that time at one second).
+      await delay(300);
       assert.equal(deleted, false);
       assert.equal(pending.destroyed, false, "cleanup must not close a response whose writes are draining");
       const missing = await fixture.prompt(id, "missing");
@@ -337,15 +339,13 @@ for (const stop of ["delete", "disconnect"] as const) {
       await aborted.promise;
       release.resolve();
       await until(() => cleaned);
-      const rejected = await fixture.prompt(id, "retry");
-      assert.equal(rejected.statusCode, 409);
-      assert.equal(object((await json(rejected)).error).code, "recovery_required");
-      const reconciled = await fixture.send("POST", `/sessions/${id}/reconcile`,
-        JSON.stringify({ note: "The wait tool stopped without external effects." }), { "Content-Type": "application/json" });
-      assert.equal(reconciled.statusCode, 200);
-      await body(reconciled);
+      // The cancelled run left a tool unfinished. That is recorded, and the next prompt is accepted.
+      const page = await json(await fixture.send("GET", `/sessions/${id}?view=records&limit=100`));
+      assert.deepEqual((page.records as Item[]).slice(-3).map((record) => [record.type, record.interrupted ?? record.status]),
+        [["tool_intent", undefined], ["tool_result", true], ["run_failed", "aborted"]]);
+      assert.equal(page.recoveryRequired, false);
       await body(await fixture.prompt(id, "retry"));
-      assert.deepEqual(lengths, [1, 3, 4]);
+      assert.deepEqual(lengths, [1, 3, 3]);
     }
     assert.equal(cleaned, true);
   });

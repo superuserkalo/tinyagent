@@ -1,6 +1,7 @@
 import {
   ProviderError,
   isItem,
+  isContentParts,
   errorMessage,
   abortError,
   throwIfAborted,
@@ -64,6 +65,8 @@ export class AnthropicProvider implements Provider {
       stream: true,
       ...(request.instructions ? { system: request.instructions } : {}),
       ...(tools.length ? { tools } : {}),
+      ...this.options.extra,
+      ...request.extra,
     };
     const blocks = new Map<number, ContentBlock>();
     let message: Item | undefined;
@@ -135,6 +138,7 @@ export class AnthropicProvider implements Provider {
             const previous = field in block.value ? stringValue(block.value, field) : "";
             block.value[field] = previous + value;
             if (kind === "text_delta" && value) yield { type: "text_delta", delta: value };
+            if (kind === "thinking_delta" && value) yield { type: "reasoning_delta", delta: value };
           }
         } else if (type === "message_delta") {
           if (!message) throw new ProviderError("Anthropic delta preceded message_start");
@@ -180,17 +184,22 @@ export class AnthropicProvider implements Provider {
       output.push(value);
     }
     const replay: Item = { ...message, content: output, usage };
-    return { text: text.join(""), assistant: anthropicAssistant(output, toolCalls, replay), output, toolCalls };
+    return {
+      text: text.join(""), assistant: anthropicAssistant(output, toolCalls, replay), output, toolCalls,
+      ...(typeof usage.input_tokens === "number" && typeof usage.output_tokens === "number"
+        ? { usage: { inputTokens: usage.input_tokens, outputTokens: usage.output_tokens } } : {}),
+    };
   }
 
   private async *httpEvents(payload: Item, signal: AbortSignal): AsyncGenerator<Item> {
     const key = this.options.apiKey ?? process.env.ANTHROPIC_API_KEY;
-    if (!key) throw new ProviderError("ANTHROPIC_API_KEY is not set");
+    if (!key && !Object.keys(this.options.headers ?? {}).some((name) => name.toLowerCase() === "x-api-key"))
+      throw new ProviderError("ANTHROPIC_API_KEY is not set");
     yield* httpSseEvents(
-      this.options.endpoint ?? ANTHROPIC_API,
+      this.options.endpoint ?? (this.options.baseUrl ? this.options.baseUrl.replace(/\/+$/, "") + "/messages" : ANTHROPIC_API),
       payload,
       {
-        "x-api-key": key,
+        "x-api-key": key ?? "",
         "anthropic-version": "2023-06-01",
         "Content-Type": "application/json",
         Accept: "text/event-stream",
@@ -205,13 +214,14 @@ function anthropicInput(history: Item[]): Item[] {
   const messages: Item[] = [];
   for (const entry of history) {
     if (entry.role === "user") {
-      messages.push({ role: "user", content: entry.content ?? "" });
+      messages.push({ role: "user", content: anthropicContent(entry.content ?? "") });
     } else if (entry.role === "assistant") {
       const metadata = isItem(entry.providerMetadata) ? entry.providerMetadata : undefined;
       const replay =
         metadata?.provider === "anthropic-messages" && isItem(metadata.message) ? metadata.message : undefined;
       if (replay && Array.isArray(replay.content)) {
-        messages.push({ role: "assistant", content: replay.content });
+        // The API rejects a message without content, so a turn that said nothing is left out.
+        if (replay.content.length) messages.push({ role: "assistant", content: replay.content });
         continue;
       }
       if (!Array.isArray(entry.content)) continue;
@@ -236,7 +246,7 @@ function anthropicInput(history: Item[]): Item[] {
       const result: Item = {
         type: "tool_result",
         tool_use_id: entry.callId,
-        content: entry.output ?? "",
+        content: anthropicContent(entry.output ?? ""),
         is_error: Boolean(entry.isError),
       };
       const previous = messages.at(-1);
@@ -255,6 +265,14 @@ function anthropicInput(history: Item[]): Item[] {
     }
   }
   return messages;
+}
+
+/** Text stays a string; a list of parts becomes Messages content blocks. */
+function anthropicContent(content: unknown): unknown {
+  if (!isContentParts(content)) return content;
+  return content.map((part) => part.type === "text" ? { type: "text", text: part.text }
+    : { type: "image", source: "url" in part ? { type: "url", url: part.url }
+      : { type: "base64", media_type: part.mediaType, data: part.data } });
 }
 
 function anthropicAssistant(output: Item[], calls: ToolCall[], replayMessage: Item): Item {

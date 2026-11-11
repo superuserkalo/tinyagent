@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tinyagent import (Agent, Session, ContextBudget, SessionBusyError,
-                       SessionCorruptionError, RecoveryRequiredError,
+                       SessionCorruptionError, RecoveryRequiredError, ResumeRequiredError,
                        CancellationToken, CancelledError, ProviderError,
                        ProviderEvent, ProviderTurn, Tool, ToolCall)
 from tinyagent_rpc import RpcSession
@@ -98,12 +98,12 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(session.history, [])
         session.close()
         with Session.open(agent, self.directory, session.id) as resumed:
-            self.assertTrue(resumed.recovery_required)
-            with self.assertRaises(RecoveryRequiredError):
-                resumed.run("retry")
-            self.assertEqual(calls, [True])
-            resumed.reconcile("Inspected the effect. It completed; do not repeat it.")
+            # Version 2 (B3): the tool finished and its result is recorded, so
+            # the failed run needs no reconciliation and the tool is not repeated.
             self.assertFalse(resumed.recovery_required)
+            self.assertFalse(resumed.resumable)
+            self.assertEqual(resumed.records[-1]["type"], "run_failed")
+            self.assertEqual(calls, [True])
 
     def test_terminal_cancellation_does_not_commit(self):
         token = CancellationToken()
@@ -215,7 +215,8 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(result.returncode, 29)
         agent = Agent(model="offline", provider=self.provider,
                       tools=[Tool("effect", "Effect", {"type": "object"}, lambda args: self.fail("replayed"))])
-        with Session.open(agent, self.directory, "s_crashed") as session:
+        # Version 2 (B3): this gate is now behind on_uncertain="reconcile".
+        with Session.open(agent, self.directory, "s_crashed", on_uncertain="reconcile") as session:
             self.assertTrue(session.recovery_required)
             self.assertEqual(session.records[-1]["type"], "tool_intent")
             with self.assertRaises(RecoveryRequiredError):
@@ -261,9 +262,15 @@ class SessionTests(unittest.TestCase):
             self.assertEqual(session.records[-1]["item"]["content"], "lost")
             self.assertEqual(session.history, [])
             self.assertFalse(session.recovery_required)
-            session.run("retry")
+            # Version 2 (B3): the run is open, so it is resumed rather than abandoned.
+            self.assertTrue(session.resumable)
+            with self.assertRaises(ResumeRequiredError):
+                session.run("retry")
+            session.resume()
             self.assertEqual([item["role"] for item in session.history], ["user", "assistant"])
-            self.assertEqual(session.history[0]["content"], "retry")
+            self.assertEqual(session.history[0]["content"], "lost")
+            session.run("retry")
+            self.assertEqual(session.history[2]["content"], "retry")
 
     def test_invalid_checkpoint_is_ignored_on_resume_and_earlier_context_is_kept(self):
         with Session(self.agent, directory=self.directory, budget=self.budget) as session:
@@ -337,9 +344,10 @@ class SessionTests(unittest.TestCase):
             with self.assertRaises(SessionBusyError):
                 session.run("concurrent")
             stream.close()
+            # Version 2 (E6): a changed configuration is recorded, not refused.
             self.agent.instructions = "changed"
-            with self.assertRaisesRegex(ValueError, "configuration changed"):
-                session.run("go")
+            session.run("go")
+            self.assertIn("configuration", [record["type"] for record in session.records[1:]])
 
     def test_rpc_resume_compaction_inspection_and_close_release_writer(self):
         emitted = []

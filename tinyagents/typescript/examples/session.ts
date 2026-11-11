@@ -3,7 +3,7 @@
  * resume, compaction, and continuing afterwards.
  *
  *   node examples/session.ts   # answers, cancels a second run at its tool call, exits
- *   node examples/session.ts   # reopens the session, reconciles, continues, compacts, continues
+ *   node examples/session.ts   # reopens the session, continues, compacts, continues
  *
  * Set OPENAI_API_KEY first. ../example.test.ts runs this file offline against a local server.
  */
@@ -71,19 +71,17 @@ async function start(directory: string): Promise<void> {
   }
 }
 
-/** Second process: reopen the session, settle the interrupted tool, and carry on. */
+/** Second process: reopen the session and carry on. */
 async function resume(directory: string, sessionId: string): Promise<void> {
   const session = Session.open(agent, directory, sessionId, budget);
   try {
     console.log(`[resumed ${session.id} with ${session.history.length} committed messages]`);
 
-    // The journal shows a tool that was started and never committed. Only you
-    // know whether its effect happened, so the session will not rerun it for you.
-    if (session.recoveryRequired) {
-      const interrupted = session.records.filter((record) => record.type === "tool_intent").at(-1);
-      console.log(`[interrupted: ${interrupted?.toolName} ${JSON.stringify(interrupted?.arguments)}]`);
-      session.reconcile("The Porto forecast lookup was cancelled. It changes nothing, so it is safe to ask again.");
-    }
+    // The cancelled run is in the journal, marked aborted, and is not part of the conversation.
+    const cancelled = session.records.filter((record) => record.type === "run_failed").at(-1);
+    console.log(`[the earlier run was ${cancelled?.status}]`);
+    // Had the process died mid-run instead, session.resumable would be true and session.resume() would continue it.
+    if (session.resumable) for await (const event of session.stream("And for Porto?")) show(event);
     for await (const event of session.stream("And for Porto?")) show(event);
 
     // Replace older turns in the model's context with a summary. The full history stays on disk.

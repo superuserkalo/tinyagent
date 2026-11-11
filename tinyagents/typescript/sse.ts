@@ -3,7 +3,14 @@ import { ProviderError, isItem, errorMessage, abortError, throwIfAborted, type I
 export const MAX_SSE_BYTES = 1_048_576;
 
 export interface HttpRequestOptions {
+  /** The API root, such as "https://gateway.example/v1". The provider appends its own path. */
+  baseUrl?: string;
+  /** The complete URL of the endpoint. Wins over `baseUrl`. */
   endpoint?: string;
+  /** Extra request headers. One named like the API key header replaces it. */
+  headers?: Record<string, string>;
+  /** A JSON object merged into every request body after TinyAgent's own fields. */
+  extra?: Item;
   timeoutMs?: number;
   fetch?: typeof globalThis.fetch;
 }
@@ -70,6 +77,8 @@ export async function* httpSseEvents(
   headers: Record<string, string>,
   signal: AbortSignal,
   options: HttpRequestOptions = {},
+  /** Yielded for a closing `data: [DONE]`. Without it that marker means the stream was cut short. */
+  done?: Item,
 ): AsyncGenerator<Item> {
   throwIfAborted(signal);
   const timeoutMs = options.timeoutMs ?? 180_000;
@@ -78,6 +87,11 @@ export async function* httpSseEvents(
   const url = new URL(endpoint);
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.hash)
     throw new ProviderError("provider endpoint must be an HTTP or HTTPS URL");
+  // A value with a control character is a mistake (a key read with its newline). It is refused
+  // here, by name only, so the value itself can never end up in an error, an event or the journal.
+  const sent = mergeHeaders(headers, options.headers);
+  for (const [name, value] of Object.entries(sent))
+    if (/[\u0000-\u001f\u007f]/.test(value)) throw new ProviderError(`request header ${name} contains a control character`);
   const controller = new AbortController();
   const requestSignal = AbortSignal.any([signal, controller.signal]);
   let expired = false;
@@ -96,12 +110,19 @@ export async function* httpSseEvents(
     void cancelBody();
   };
   try {
-    const response = await (options.fetch ?? globalThis.fetch)(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-      signal: requestSignal,
-    });
+    let response: Response;
+    try {
+      response = await (options.fetch ?? globalThis.fetch)(url, {
+        method: "POST",
+        headers: sent,
+        body: JSON.stringify(payload),
+        signal: requestSignal,
+      });
+    } catch (error) {
+      if (signal.aborted || expired) throw error;
+      // Nothing of a response arrived, so sending the request again is safe.
+      throw new ProviderError("provider connection failed: " + errorMessage(error), { retryable: true });
+    }
     if (!response.body) throw new ProviderError("API response " + response.status + " has no body");
     reader = response.body.getReader();
     requestSignal.addEventListener("abort", abort, { once: true });
@@ -117,10 +138,14 @@ export async function* httpSseEvents(
         parts.push(part);
         bytes += part.length;
       }
-      const detail = new TextDecoder().decode(Buffer.concat(parts, bytes));
-      throw new ProviderError("API error " + response.status + ": " + detail);
+      // An error body may echo anything, the request included. It is reported in part only.
+      const detail = new TextDecoder().decode(Buffer.concat(parts, bytes)).slice(0, 500);
+      throw new ProviderError("API error " + response.status + ": " + detail, {
+        retryable: [429, 500, 502, 503, 504].includes(response.status),
+        retryAfter: retryAfterSeconds(response.headers.get("retry-after")),
+      });
     }
-    yield* sseEvents(reader, requestSignal);
+    yield* sseEvents(reader, requestSignal, done);
     throwIfAborted(requestSignal);
   } catch (error) {
     if (signal.aborted) throw abortError();
@@ -135,13 +160,25 @@ export async function* httpSseEvents(
   }
 }
 
-async function* sseEvents(reader: ReadableStreamDefaultReader<Uint8Array>, signal: AbortSignal): AsyncGenerator<Item> {
+/** Header names are case-insensitive, so a caller's "authorization" replaces the provider's "Authorization". */
+function mergeHeaders(base: Record<string, string>, extra: Record<string, string> = {}): Record<string, string> {
+  const merged = new Map(Object.entries(base).map(([name, value]) => [name.toLowerCase(), value]));
+  for (const [name, value] of Object.entries(extra)) merged.set(name.toLowerCase(), value);
+  return Object.fromEntries(merged);
+}
+
+/** Retry-After is honoured as a number of seconds. Its HTTP-date form is ignored. */
+function retryAfterSeconds(header: string | null): number | undefined {
+  return header && /^\d+$/.test(header.trim()) ? Number(header) : undefined;
+}
+
+async function* sseEvents(reader: ReadableStreamDefaultReader<Uint8Array>, signal: AbortSignal, done?: Item): AsyncGenerator<Item> {
   let data: string[] = [];
   let bytes = 0;
   for await (const line of sseLines(reader, signal)) {
     throwIfAborted(signal);
     if (line === "") {
-      if (data.length) yield decodeEvent(data);
+      if (data.length) yield decodeEvent(data, done);
       throwIfAborted(signal);
       data = [];
       bytes = 0;
@@ -154,11 +191,12 @@ async function* sseEvents(reader: ReadableStreamDefaultReader<Uint8Array>, signa
     }
   }
   throwIfAborted(signal);
-  if (data.length) yield decodeEvent(data);
+  if (data.length) yield decodeEvent(data, done);
 }
 
-function decodeEvent(lines: string[]): Item {
+function decodeEvent(lines: string[], done?: Item): Item {
   const data = lines.join("\n");
+  if (data === "[DONE]" && done) return done;
   if (data === "[DONE]") throw new ProviderError("provider stream ended without a complete turn");
   return parseObject(data);
 }

@@ -18,7 +18,6 @@ import {
   ProviderError,
   RpcSession,
   Tool,
-  ToolOutputLimitError,
   runBash,
   runRpc,
   type AgentEvent,
@@ -85,7 +84,13 @@ async function captureRpc(input: Buffer): Promise<Item[]> {
 }
 
 test("shared limits and static JSONL fixtures", async () => {
-  assert.equal(rpcFixture.protocolVersion, PROTOCOL_VERSION);
+  // conformance/rpc_v1.json is the version 1 fixture. Version 2 only adds to it,
+  // so its expectations are brought up to date here: get_state gained three fields.
+  assert.ok(rpcFixture.protocolVersion <= PROTOCOL_VERSION);
+  for (const scenario of rpcFixture.scenarios)
+    for (const expected of scenario.expected ?? [])
+      if (expected.command === "get_state" && expected.success)
+        expected.data = { ...(expected.data as Item), protocolVersion: PROTOCOL_VERSION, resumable: false, paused: null, usage: null };
   assert.deepEqual(rpcFixture.limits, {
     jsonlLineBytes: MAX_JSONL_LINE_BYTES,
     httpBodyBytes: MAX_HTTP_BODY_BYTES,
@@ -190,10 +195,13 @@ test("RPC busy rejection, abort, and rollback", async () => {
   assert.deepEqual(abort.data, { accepted: true, runId });
   assert.equal(emitted.find((item) => item.type === "agent_end")?.status, "aborted");
   assert.deepEqual(emitted.at(-1)?.data, {
-    protocolVersion: 1,
+    protocolVersion: 2,
     status: "idle",
     runId: null,
     messageCount: 0,
+    resumable: false,
+    paused: null,
+    usage: { inputTokens: 0, outputTokens: 0, requests: 0 },
   });
 });
 
@@ -353,16 +361,22 @@ test("tool output limit is a recoverable tool error", async () => {
   });
   const toolEnd = emitted.find((event) => event.type === "tool_execution_end");
   assert.equal(toolEnd?.type === "tool_execution_end" && toolEnd.isError, true);
-  assert.match(toolEnd?.type === "tool_execution_end" ? toolEnd.output : "", /ToolOutputLimitError/);
+  assert.match(toolEnd?.type === "tool_execution_end" ? String(toolEnd.output) : "", /ToolOutputLimitError/);
   assert.ok((toolEnd?.type === "tool_execution_end" ? toolEnd.output.length : 1_000) < 200);
   assert.equal(result.text, "recovered");
 });
 
-test("bash output is bounded", async () => {
-  await assert.rejects(
-    runBash(`python3 -c 'print("x" * ${MAX_TOOL_OUTPUT_BYTES + 1})'`),
-    (error) => error instanceof ToolOutputLimitError,
-  );
+test("D18 bash output of 100,000 bytes keeps its head and tail around an elided line", async () => {
+  // Each line is 10 bytes, so the cut points are known. The process finishes normally: nothing kills it.
+  const output = await runBash("for i in $(seq 1 10000); do printf '%09d\\n' $i; done; echo done >&2");
+  const lines = (first: number, last: number) =>
+    Array.from({ length: last - first + 1 }, (_, index) => `${String(first + index).padStart(9, "0")}\n`).join("");
+  assert.equal(output, `exit_code: 0\nstdout:\n${lines(1, 1500)}\n[... 70000 bytes elided ...]\n${lines(8501, 10000)}stderr:\ndone\n`);
+  // A multi-byte character is never cut in half.
+  const snowmen = await runBash("{ printf xy; yes ☃ | head -c 40000; }");
+  assert.doesNotMatch(snowmen, /\uFFFD/);
+  assert.match(snowmen, /\n\[\.\.\. 1000[0-9] bytes elided \.\.\.\]\n/);
+  assert.match(await runBash("printf '%030000d' 7"), /^exit_code: 0\nstdout:\n0{29999}7stderr:\n$/);
 });
 
 test("compatible complete transport tool loop", async () => {

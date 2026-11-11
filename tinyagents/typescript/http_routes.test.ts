@@ -59,7 +59,7 @@ test("native HTTP authentication rejects absent, wrong, and duplicate credential
   for (const second of ["Bearer secret", "Bearer wrong"]) {
     const exchange = fixture.open("GET", "/health", [
       "Host",
-      "fixture.invalid",
+      "127.0.0.1",
       "Authorization",
       "Bearer secret",
       "Authorization",
@@ -72,7 +72,7 @@ test("native HTTP authentication rejects absent, wrong, and duplicate credential
   }
   const response = await fixture.send("GET", "/health", undefined, authorized);
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(await json(response), { status: "ok", protocolVersion: 1 });
+  assert.deepEqual(await json(response), { status: "ok", protocolVersion: 2 });
 });
 
 test("native HTTP checks JSON, UTF-8, media types, and fixed or chunked byte limits", { timeout: 5000 }, async (t) => {

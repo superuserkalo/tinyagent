@@ -7,7 +7,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from tiny_agent import MAX_TOOL_OUTPUT_BYTES, ToolOutputLimitError, run_bash
+from tiny_agent import run_bash
 from tinyagent import CancellationToken, CancelledError
 
 
@@ -43,7 +43,14 @@ class BashStopTests(unittest.TestCase):
             process.wait = await_exit
             return process
 
-        expected = ToolOutputLimitError if wait_confirms_exit else PermissionError
+        # Version 2 (A6) no longer kills a command for its output size, so
+        # cancellation is what stops the process here. The command ends by
+        # itself just after, as the group that could not be signalled did.
+        expected = CancelledError if wait_confirms_exit else PermissionError
+        token = CancellationToken()
+        timer = threading.Timer(0.1, token.cancel)
+        timer.start()
+        self.addCleanup(timer.join)
         with (
             patch("tiny_agent.subprocess.Popen", side_effect=start),
             patch(
@@ -53,7 +60,7 @@ class BashStopTests(unittest.TestCase):
             patch("threading.excepthook", side_effect=thread_errors.append),
             self.assertRaises(expected),
         ):
-            run_bash(f"python3 -c 'print(\"x\" * {MAX_TOOL_OUTPUT_BYTES + 1})'")
+            run_bash("sleep 0.15", token)
         kill.assert_called()
         self.assertEqual(thread_errors, [])
 

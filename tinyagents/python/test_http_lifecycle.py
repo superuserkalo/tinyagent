@@ -92,7 +92,7 @@ class HttpLifecycleTests(unittest.TestCase):
         self.assertEqual(response.status, 404)
         response.read()
 
-    def test_terminal_framing_holds_busy_state_and_failure_preserves_history(self):
+    def test_terminal_framing_releases_busy_state_and_preserves_committed_history(self):
         for fail in (False, True):
             with self.subTest(fail=fail):
                 histories = []
@@ -121,9 +121,9 @@ class HttpLifecycleTests(unittest.TestCase):
                 try:
                     self.assertTrue(response.chunked)
                     self.assertTrue(entered.wait(1))
-                    busy = fixture.prompt(session, "busy")
-                    self.assertEqual(busy.status, 409)
-                    busy.read()
+                    following = fixture.prompt(session, "next")
+                    self.assertEqual(following.status, 200)
+                    following.read()
                 finally:
                     release.set()
                 if fail:
@@ -132,8 +132,7 @@ class HttpLifecycleTests(unittest.TestCase):
                 else:
                     response.read()
                 fixture.wait_idle(session)
-                fixture.prompt(session, "third").read()
-                self.assertEqual(histories, [1, 3, 3 if fail else 5])
+                self.assertEqual(histories, [1, 3, 5])
 
     def test_cancel_delete_and_shutdown_release_stalled_output(self):
         for action in ("cancel", "delete", "shutdown"):
@@ -230,7 +229,8 @@ class HttpLifecycleTests(unittest.TestCase):
         closing = threading.Thread(target=fixture.application.close, daemon=True)
         closing.start()
         try:
-            self.assertFalse(run.done.wait(1.1))
+            # Version 2 (G24): a cancelled run waits one second for host code, no longer.
+            self.assertFalse(run.done.wait(0.5))
             self.assertTrue(closing.is_alive())
             self.assertIn(session_id, fixture.application._sessions)
             self.assertFalse(connection.outgoing.write_closed)
@@ -292,14 +292,16 @@ class HttpLifecycleTests(unittest.TestCase):
         pending.close()
         self.assertTrue(cleaned.wait(1))
         self.assertTrue(run.done.wait(1))
-        rejected = fixture.prompt(session_id, "retry")
-        self.assertEqual(rejected.status, 409)
-        self.assertEqual(json.loads(rejected.read())["error"]["code"], "recovery_required")
+        # Version 2 (F6): a cancelled run never requires reconciliation. Its
+        # unfinished tool is recorded as interrupted and the next prompt is accepted.
         core = fixture.application._sessions[session_id].core
         self.assertEqual(len(core.history), 2)
-        core.reconcile("The wait tool stopped without external effects.")
-        fixture.prompt(session_id, "retry").read()
-        self.assertEqual(histories, [1, 3, 4])
+        self.assertFalse(core.recovery_required)
+        self.assertEqual([record["type"] for record in core.records[-2:]], ["tool_result", "run_failed"])
+        accepted = fixture.prompt(session_id, "retry")
+        self.assertEqual(accepted.status, 200)
+        accepted.read()
+        self.assertEqual(histories, [1, 3, 3])
 
     def test_provider_failure_and_oversized_event_have_one_terminal_and_roll_back(self):
         for oversized in (False, True):

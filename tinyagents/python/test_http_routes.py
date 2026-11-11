@@ -34,7 +34,7 @@ class HttpRouteTests(unittest.TestCase):
                     self.assertEqual(response.getheader("Cache-Control"), "no-store")
         health = fixture.call("GET", "/health", headers=auth)
         self.assertEqual(
-            json.loads(health.read()), {"status": "ok", "protocolVersion": 1}
+            json.loads(health.read()), {"status": "ok", "protocolVersion": 2}
         )
         idle = fixture.call("POST", f"/sessions/{session}/cancel", headers=auth)
         self.assertEqual(json.loads(idle.read()), {"accepted": False, "runId": None})

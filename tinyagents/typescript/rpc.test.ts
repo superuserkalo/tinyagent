@@ -106,10 +106,13 @@ test("RPC oversized command replies cancel the run and keep the connection usabl
   assert.equal(messages.filter((message) => message.type === "protocol_error").length, 1);
   assert.equal((messages.find((message) => message.type === "protocol_error")?.error as Item).code, "output_too_large");
   assert.deepEqual(messages.find((message) => message.id === "after")?.data, {
-    protocolVersion: 1,
+    protocolVersion: 2,
     status: "idle",
     runId: null,
     messageCount: 0,
+    resumable: false,
+    paused: null,
+    usage: { inputTokens: 0, outputTokens: 0, requests: 0 },
   });
   assert.equal(messages.find((message) => message.type === "agent_end")?.status, "aborted");
   assert.equal(released, true);
@@ -278,10 +281,13 @@ test("RPC cancellation preserves a connection that drains within the grace perio
     input.end('{"id":"after","type":"get_state"}\n');
     await within(outcome);
     assert.deepEqual(messages.find((message) => message.id === "after")?.data, {
-      protocolVersion: 1,
+      protocolVersion: 2,
       status: "idle",
       runId: null,
       messageCount: 0,
+      resumable: false,
+      paused: null,
+      usage: { inputTokens: 0, outputTokens: 0, requests: 0 },
     });
     assert.equal(output.destroyed, false);
   } finally {

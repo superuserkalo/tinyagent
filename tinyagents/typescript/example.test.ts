@@ -87,15 +87,14 @@ test("the session example cancels, restarts, resumes, compacts, and continues of
   const second = await example();
   assert.equal(requests.length, 7);
   assert.equal(second,
-    `[resumed ${sessionId} with 4 committed messages]\n[interrupted: forecast {"city":"Porto"}]\n` +
+    `[resumed ${sessionId} with 4 committed messages]\n[the earlier run was aborted]\n` +
     '[forecast {"city":"Porto"}]\nPorto will be clear too.\n[run completed]\n' +
-    "[compacted: true; 9 messages still in history]\n" +
+    "[compacted: true; 8 messages still in history]\n" +
     "Either city suits a walk.\n[run completed]\n");
 
-  // The retry saw the committed Lisbon exchange and the reconciliation, not the cancelled call.
+  // The retry saw the committed Lisbon exchange, and nothing of the cancelled run.
   const retried = JSON.stringify(requests[3].input);
   assert.match(retried, /call_1/);
-  assert.match(retried, /Interrupted run recovery: The Porto forecast lookup was cancelled/);
   assert.doesNotMatch(retried, /call_2/);
   // Compaction is an ordinary completion without tools.
   assert.match(String(requests[5].instructions), /^Summarize/);
@@ -112,5 +111,5 @@ test("the session example cancels, restarts, resumes, compacts, and continues of
     .map((line) => (JSON.parse((JSON.parse(line) as { payload: string }).payload) as Item).type);
   const count = (type: string) => journal.filter((recorded) => recorded === type).length;
   assert.deepEqual([count("session"), count("run_commit"), count("run_failed"), count("reconciled"), count("checkpoint")],
-    [1, 3, 1, 1, 1]);
+    [1, 3, 1, 0, 1]);
 });

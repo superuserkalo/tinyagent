@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+from dataclasses import replace
 from typing import Generator, Iterable, Iterator
 
 from tinyagent_types import (
@@ -23,6 +24,8 @@ from tinyagent_sse import (
     Arguments,
     MAX_SSE_BYTES,
     http_sse_events as _http_sse_events,
+    merge_headers,
+    token_count,
     index_value,
     object_value,
     parse_object,
@@ -39,10 +42,17 @@ class OpenAIProvider:
         event_transport: EventTransport | None = None,
         *,
         endpoint: str = OPENAI_API,
+        base_url: str | None = None,
+        headers: dict[str, str] | None = None,
+        extra: JsonObject | None = None,
         timeout: float = 180,
     ) -> None:
+        """base_url replaces the API root, headers are added to (or replace) the
+        request headers, and extra is merged into every request body."""
         self.api_key = api_key
-        self.endpoint = endpoint
+        self.endpoint = base_url.rstrip("/") + "/responses" if base_url else endpoint
+        self.headers = dict(headers or {})
+        self.extra = dict(extra or {})
         self.timeout = timeout
         self._event_transport = event_transport or self._http_events
 
@@ -53,6 +63,7 @@ class OpenAIProvider:
         history: list[JsonObject],
         tools: Iterable[Tool],
         cancellation: CancellationToken,
+        extra: JsonObject | None = None,
     ) -> Generator[ProviderEvent, None, ProviderTurn]:
         cancellation.raise_if_cancelled()
         payload: JsonObject = {
@@ -68,8 +79,11 @@ class OpenAIProvider:
         output: dict[int, JsonObject] = {}
         arguments: dict[int, Arguments] = {}
         terminal = False
+        usage: object = None
         events: Iterator[JsonObject] | None = None
         try:
+            payload.update(self.extra)
+            payload.update(extra or {})
             events = iter(self._event_transport(payload, cancellation))
             for event in events:
                 cancellation.raise_if_cancelled()
@@ -89,6 +103,10 @@ class OpenAIProvider:
                     delta = string_value(event, "delta")
                     if delta:
                         yield ProviderEvent("text_delta", delta)
+                elif event_type == "response.reasoning_summary_text.delta":
+                    delta = string_value(event, "delta")
+                    if delta:
+                        yield ProviderEvent("reasoning_delta", delta)
                 elif event_type == "response.function_call_arguments.delta":
                     index = index_value(event.get("output_index"))
                     arguments.setdefault(index, Arguments()).append(
@@ -103,6 +121,7 @@ class OpenAIProvider:
                     response = object_value(event.get("response"), "completed response")
                     if "status" in response and response["status"] != "completed":
                         raise ProviderError("OpenAI response is incomplete")
+                    usage = response.get("usage")
                     if "output" in response:
                         items = response["output"]
                         if not isinstance(items, list):
@@ -136,22 +155,24 @@ class OpenAIProvider:
                 and index in arguments
             ):
                 item["arguments"] = arguments[index].value()
-        return _openai_turn([output[index] for index in sorted(output)])
+        turn = _openai_turn([output[index] for index in sorted(output)])
+        return replace(turn, input_tokens=token_count(usage, "input_tokens"),
+                       output_tokens=token_count(usage, "output_tokens"))
 
     def _http_events(
         self, payload: JsonObject, cancellation: CancellationToken
     ) -> Iterator[JsonObject]:
         key = self.api_key if self.api_key is not None else os.getenv("OPENAI_API_KEY")
-        if not key:
+        if not key and "authorization" not in {name.lower() for name in self.headers}:
             raise ProviderError("OPENAI_API_KEY is not set")
         yield from _http_sse_events(
             self.endpoint,
             payload,
-            {
-                "Authorization": f"Bearer {key}",
+            merge_headers({
+                **({"Authorization": f"Bearer {key}"} if key else {}),
                 "Content-Type": "application/json",
                 "Accept": "text/event-stream",
-            },
+            }, self.headers),
             cancellation,
             self.timeout,
         )
@@ -229,7 +250,7 @@ def _openai_input(history: Iterable[JsonObject]) -> list[JsonObject]:
     for entry in history:
         role = entry.get("role")
         if role == "user":
-            provider_input.append({"role": "user", "content": entry.get("content", "")})
+            provider_input.append({"role": "user", "content": _openai_content(entry.get("content", ""))})
         elif role == "assistant":
             metadata = entry.get("providerMetadata")
             replay = (
@@ -262,13 +283,27 @@ def _openai_input(history: Iterable[JsonObject]) -> list[JsonObject]:
                 {
                     "type": "function_call_output",
                     "call_id": entry.get("callId"),
-                    "output": entry.get("output", ""),
+                    "output": _openai_content(entry.get("output", "")),
                 }
             )
         else:
             # Accept pre-0.0.1 OpenAI-native history for migration.
             provider_input.append(entry)
     return provider_input
+
+
+def _openai_content(content: object) -> object:
+    """Text stays a string; a list of parts becomes Responses input parts."""
+    if not isinstance(content, list):
+        return content
+    parts: list[JsonObject] = []
+    for part in content:
+        if part.get("type") == "text":
+            parts.append({"type": "input_text", "text": part.get("text", "")})
+        elif part.get("type") == "image":
+            url = part.get("url") or f"data:{part.get('mediaType')};base64,{part.get('data')}"
+            parts.append({"type": "input_image", "image_url": url})
+    return parts
 
 
 def _assistant_message(

@@ -15,12 +15,12 @@
     "dist",
     "examples"
   ],
-  "main": "./dist/tiny_agent.js",
-  "types": "./dist/tiny_agent.d.ts",
+  "main": "./dist/sdk.js",
+  "types": "./dist/sdk.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/tiny_agent.d.ts",
-      "default": "./dist/tiny_agent.js"
+      "types": "./dist/sdk.d.ts",
+      "default": "./dist/sdk.js"
     },
     "./package.json": "./package.json"
   },

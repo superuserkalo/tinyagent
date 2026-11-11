@@ -50,6 +50,16 @@ class Task:
 
 
 class RpcLifecycleTests(unittest.TestCase):
+    def test_refused_resume_answers_and_leaves_the_connection_usable(self):
+        emitted = []
+        session = RpcSession(Agent(model="test", transport=lambda payload: []), emitted.append)
+        self.addCleanup(session.close)
+        refused = Task(lambda: session.handle({"id": "resume", "type": "resume_run"}))
+        refused.join()
+        self.assertEqual(emitted[-1]["error"]["code"], "nothing_to_resume")
+        session.handle({"id": "state", "type": "get_state"})
+        self.assertEqual(emitted[-1]["data"]["status"], "idle")
+
     def test_close_waits_for_prompt_acknowledgement_before_returning(self):
         for fail_ack in (False, True):
             with self.subTest(fail_ack=fail_ack):
@@ -152,7 +162,7 @@ class RpcLifecycleTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(emitted[0]["id"], "ok")
 
-    def test_history_commits_only_after_terminal_delivery(self):
+    def test_history_commits_before_terminal_delivery(self):
         for fail_terminal in (False, True):
             with self.subTest(fail_terminal=fail_terminal):
                 entered = threading.Event()
@@ -184,18 +194,14 @@ class RpcLifecycleTests(unittest.TestCase):
                 try:
                     self.assertTrue(entered.wait(1))
                     session.handle({"type": "get_state"})
-                    self.assertEqual(emitted[-1]["data"]["messageCount"], 2)
-                    self.assertEqual(emitted[-1]["data"]["status"], "running")
-                    session.handle(
-                        {"id": "busy", "type": "prompt", "message": "too soon"}
-                    )
-                    self.assertEqual(emitted[-1]["error"]["code"], "busy")
+                    self.assertEqual(emitted[-1]["data"]["messageCount"], 4)
+                    self.assertEqual(emitted[-1]["data"]["status"], "idle")
+                    session.handle({"id": "next", "type": "prompt", "message": "next"})
+                    self.assertTrue(session.wait_idle(1))
                 finally:
                     release.set()
                     self.assertTrue(session.wait_idle(1))
-                session.handle({"type": "prompt", "message": "third"})
-                self.assertTrue(session.wait_idle(1))
-                self.assertEqual(histories, [1, 3, 3 if fail_terminal else 5])
+                self.assertEqual(histories, [1, 3, 5])
 
     def test_reset_waits_for_tool_cleanup_and_preserves_event_order(self):
         entered = threading.Event()
@@ -284,7 +290,7 @@ class RpcLifecycleTests(unittest.TestCase):
                 session.handle({"type": "get_state"})
                 self.assertEqual(emitted[-1]["data"]["messageCount"], 0)
 
-    def test_abort_during_terminal_delivery_retains_prior_history(self):
+    def test_abort_after_commit_before_terminal_delivery_is_not_accepted(self):
         entered = threading.Event()
         release = threading.Event()
         histories = []
@@ -311,14 +317,14 @@ class RpcLifecycleTests(unittest.TestCase):
         try:
             self.assertTrue(entered.wait(1))
             session.handle({"id": "abort", "type": "abort"})
-            self.assertTrue(emitted[-1]["data"]["accepted"])
-            self.assertFalse(session.wait_idle(0.01))
+            self.assertFalse(emitted[-1]["data"]["accepted"])
+            self.assertTrue(session.wait_idle(0.01))
         finally:
             release.set()
             self.assertTrue(session.wait_idle(1))
         session.handle({"type": "prompt", "message": "third"})
         self.assertTrue(session.wait_idle(1))
-        self.assertEqual(histories, [1, 3, 3])
+        self.assertEqual(histories, [1, 3, 5])
 
     def test_closed_session_rejects_prompts_without_calling_provider(self):
         calls = []

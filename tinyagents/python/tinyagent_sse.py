@@ -11,9 +11,10 @@ import time
 from typing import Iterator, Protocol
 from urllib.parse import urlsplit
 
-from tinyagent_types import CancellationToken, JsonObject, ProviderError
+from tinyagent_types import CancellationToken, JsonObject, ProviderError, clean
 
 MAX_SSE_BYTES = 1_048_576
+MAX_ERROR_CHARACTERS = 500  # of a provider's error body, wherever it is reported or stored
 
 
 class Reader(Protocol):
@@ -72,7 +73,8 @@ def parse_object(source: str) -> JsonObject:
         raise ProviderError(f"invalid provider JSON: {error}") from error
 
 
-def sse_events(source: Reader, cancellation: CancellationToken) -> Iterator[JsonObject]:
+def sse_events(source: Reader, cancellation: CancellationToken, done: bool = False) -> Iterator[JsonObject]:
+    """Yield each SSE data object. done says whether a [DONE] line ends the stream normally."""
     pending = bytearray()
     data: list[str] = []
     data_bytes = 0
@@ -101,6 +103,8 @@ def sse_events(source: Reader, cancellation: CancellationToken) -> Iterator[Json
                 if data:
                     value = "\n".join(data)
                     if value == "[DONE]":
+                        if done:
+                            return
                         raise ProviderError(
                             "provider stream ended without a complete turn"
                         )
@@ -127,12 +131,24 @@ def sse_events(source: Reader, cancellation: CancellationToken) -> Iterator[Json
             return
 
 
+def merge_headers(defaults: dict[str, str], extra: dict[str, str] | None) -> dict[str, str]:
+    """Caller headers win over the defaults, whatever their letter case."""
+    replaced = {name.lower() for name in extra or {}}
+    return {**{name: value for name, value in defaults.items() if name.lower() not in replaced}, **(extra or {})}
+
+
+def token_count(usage: object, key: str) -> int:
+    value = usage.get(key) if isinstance(usage, dict) else None
+    return value if type(value) is int and value >= 0 else 0
+
+
 def http_sse_events(
     url: str,
     payload: JsonObject,
     headers: dict[str, str],
     cancellation: CancellationToken,
     timeout: float = 180,
+    done: bool = False,
 ) -> Iterator[JsonObject]:
     if isinstance(timeout, bool) or not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("provider timeout must be positive and finite")
@@ -144,8 +160,14 @@ def http_sse_events(
         or address.fragment
     ):
         raise ValueError("provider endpoint must be an HTTP or HTTPS URL")
+    for name, value in headers.items():
+        # Checked here so that no library error can quote a header value: it may be the API key.
+        if not isinstance(value, str) or any(ord(character) < 32 or ord(character) > 255 or ord(character) == 127
+                                             for character in name + value):
+            raise ProviderError(f"request header {name!r:.80} has a control or non-Latin-1 character "
+                                "(an API key read from a file often ends with a newline)")
     cancellation.raise_if_cancelled()
-    body = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    body = json.dumps(clean(payload), ensure_ascii=False, allow_nan=False).encode("utf-8")
     connection_type = (
         http.client.HTTPSConnection
         if address.scheme == "https"
@@ -190,14 +212,21 @@ def http_sse_events(
         response = connection.getresponse()
         token.raise_if_cancelled()
         if not 200 <= response.status < 300:
-            detail = response.read(8192).decode("utf-8", errors="replace")
-            raise ProviderError(f"API error {response.status}: {detail}")
-        yield from sse_events(response, token)
+            detail = response.read(8192).decode("utf-8", errors="replace")[:MAX_ERROR_CHARACTERS]
+            wait = response.getheader("Retry-After", "")
+            raise ProviderError(
+                f"API error {response.status}: {detail}", status=response.status,
+                retry_after=float(wait) if wait.strip().isdigit() else None,
+                retryable=response.status in (429, 500, 502, 503, 504))
+        yield from sse_events(response, token, done)
         token.raise_if_cancelled()
     except Exception as error:
         if expired.is_set():
             raise ProviderError("provider request timed out") from error
         token.raise_if_cancelled()
+        if response is None and isinstance(error, (OSError, http.client.HTTPException)):
+            # No response arrived, so asking again cannot repeat any model output.
+            raise ProviderError(f"connection failed: {error}", retryable=True) from error
         raise
     finally:
         timer.cancel()

@@ -110,7 +110,7 @@ export class HttpFixture {
       this.application.server.emit("connection", server);
       return client;
     };
-    const outgoing = request({ host: "fixture.invalid", method, path, headers, agent });
+    const outgoing = request({ host: "127.0.0.1", method, path, headers, agent });
     const response = new Promise<IncomingMessage>((resolve, reject) => {
       outgoing.once("response", (incoming) => {
         incoming.on("error", () => {});

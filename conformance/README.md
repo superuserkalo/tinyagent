@@ -1,17 +1,22 @@
-# TinyAgent conformance fixtures
+# TinyAgent conformance
 
-This directory holds the language-neutral fixtures that every implementation's
-tests read, and `run.py`, which runs each language's native checks.
+This directory holds what all languages share for testing the contract in
+[PROTOCOL.md](../PROTOCOL.md):
 
-| File | What it holds |
+- language-neutral **fixtures** that every implementation's own tests read;
+- `run.py`, the **runner**, which runs each language's native checks;
+- `blackbox/`, the **black-box harness**, which drives an implementation from
+  outside, as a process, and injects faults.
+
+| Path | What it holds |
 | --- | --- |
-| `rpc_v1.json` | RPC protocol version, byte limits, and RPC scenarios |
+| `rpc_v1.json` | Protocol version 1 RPC limits and scenarios |
 | `tool_arguments.json` | JSON Schema cases for tool argument validation |
 | `providers/*.sse` | Synthetic SSE transcripts for OpenAI Responses and Anthropic Messages |
 | `run.py` | The runner |
+| `blackbox/` | The black-box harness; see [its README](blackbox/README.md) |
 
-[PROTOCOL.md](../PROTOCOL.md) is the contract these fixtures test. When the two
-disagree, fix them together.
+When PROTOCOL.md and these disagree, fix them together.
 
 ## Fixtures
 
@@ -60,10 +65,16 @@ The scenarios are `idle_state`, `idle_abort`, `unknown_with_id`,
 Command framing, response fields, error codes and limits must match this file
 exactly.
 
-The file covers the baseline commands only: `prompt`, `abort`, `new_session`
-and `get_state`. It has no scenarios for durable sessions, recovery or
-compaction. Python and TypeScript test those in their own suites
-(`test_sessions.py` and `sessions.test.ts`).
+**This file describes protocol version 1 and must not be changed.** Go, Rust
+and Zig bundle byte-identical copies of it and are still at version 1. It
+covers the baseline commands only: `prompt`, `abort`, `new_session` and
+`get_state`, with `"protocolVersion": 1` and the version 1 `get_state` fields.
+
+Python and TypeScript are at version 2 and still read it. Their tests overlay
+what version 2 adds on the expected `get_state` data (`protocolVersion: 2`,
+`resumable`, `paused`, `usage`) and on the prompt response (`repeated`), and
+check everything else in the file unchanged. Everything else in version 2 is
+tested by their own suites and by the black-box harness.
 
 ### `tool_arguments.json`
 
@@ -97,6 +108,10 @@ OpenAI encrypted reasoning items, and Anthropic thinking signatures.
 Each language feeds them to its provider parsers, usually split at awkward byte
 boundaries, and checks the resulting text, tool calls and replay metadata.
 
+There are no shared transcripts for the Chat Completions provider yet. The
+Python and TypeScript tests define their Chat Completions streams inline, and
+the harness's fake provider speaks that API in every `[chat]` case.
+
 ## Bundled copies
 
 Three packages carry byte-identical copies so their tests run outside this
@@ -126,6 +141,10 @@ python3 conformance/run.py python typescript   # the two supported languages
 python3 conformance/run.py go                  # one experimental language
 python3 conformance/run.py                     # all nine
 ```
+
+The runner compares the bundled copies of PROTOCOL.md and the fixtures (see
+above) before it runs Go, Rust or Zig. After changing PROTOCOL.md, copy it to
+`tinyagents/go/PROTOCOL.md` and `tinyagents/rust/PROTOCOL.md`.
 
 Language names are `python`, `typescript`, `go`, `rust`, `zig`, `java`,
 `elixir`, `csharp` and `php`.
@@ -161,9 +180,84 @@ Behavior:
 - The exit status is zero only if every selected language reports
   `CHECKS PASSED`.
 
+## Black-box harness
+
+[`blackbox/`](blackbox/README.md) is one harness that drives any implementation
+through its public surfaces only: RPC mode, the HTTP server, one-shot mode and
+the interactive prompt. It starts the language's CLI as a process. The model is
+a scripted fake server on loopback that speaks the OpenAI Responses, Anthropic
+Messages and Chat Completions streaming APIs, records every request, and
+misbehaves on demand. The CLI's only tool is bash, so every tool call is a
+shell command whose effect is a line appended to a file in the case's temp
+directory. It needs Python 3.10 or newer and nothing else, and writes nothing
+into the repository.
+
+It has two parts:
+
+- **Scenarios**, one function per specified behaviour.
+- **Fault sweeps** over one standard conversation: kill the process at every
+  journal record and resume or abandon (`crash`), inject each provider fault at
+  each model request (`provider`), cancel after each event (`cancel`),
+  disconnect the HTTP client after each event, attached and detached
+  (`client`), and seeded random walks over one session (`walk`).
+
+Eight invariants are checked after every step of every sweep and at the end of
+every scenario: well-formed streams, well-formed provider requests, at most one
+effect per tool call, agreement between the terminal event and the journal,
+deadlines on every wait, stable replay, a session that stays usable, and no
+process left running.
+
+From the repository root:
+
+```sh
+python conformance/blackbox/run.py python typescript --quick    # the CI subset
+python conformance/blackbox/run.py python typescript            # everything
+python conformance/blackbox/run.py --list                       # case names
+python conformance/blackbox/run.py python --only 'crash[rpc,k=7,resume]' --seed 1
+```
+
+The full run is 515 cases per language. A failure prints what was expected,
+what happened and a command that reproduces that one case. After the
+per-language counts the harness lists every case where two languages ended
+differently. A language that is disabled or missing prints `NOT RUN` and is
+never counted as passing. Run one harness at a time on a machine: heavy
+parallel load causes timing failures.
+
+### Adding a language
+
+Enable or add one entry in [`blackbox/targets.py`](blackbox/targets.py): the
+command that starts the language's CLI. The harness appends `--mode rpc`,
+`serve` or `-p ...` itself and configures the process only through the
+documented `TINYAGENT_*` environment variables and CLI flags. Entries for Go,
+Rust, Zig, C#, Java, PHP and Elixir exist with `enabled=False`; each is switched
+on when that language's port to protocol version 2 lands.
+
+Beyond the wire protocol the harness relies on one thing: a stored session is
+the file `<sessionId>.jsonl` in `TINYAGENT_SESSION_DIR`, one record per line.
+
+### What it cannot see
+
+The CLI's only tool is a non-idempotent bash and it exposes no hooks, so some
+of the contract is invisible from outside. Each language's own suite must
+cover:
+
+- the `Storage` interface, `MemoryStorage`, custom stores, and a fenced append;
+- rerun of an idempotent tool after a crash;
+- `onUncertain: "reconcile"`;
+- `beforeTool` and `afterTool`;
+- pause and resume with a value;
+- typed output, run `context`, and the provider options `headers` and `extra`;
+- trace events and `ScriptedProvider`;
+- tool timeouts, including the bash timeout, and the bash `env` option;
+- a tool that returns an image;
+- import and construction without I/O.
+
+[The harness README](blackbox/README.md#covered-by-each-languages-own-suite)
+maps each of these to the reason it is not black-box.
+
 ## What is verified
 
 | Languages | State |
 | --- | --- |
-| Python, TypeScript | `run.py python typescript` runs in CI on Linux for pushes to `main` and for pull requests. Each language's own suite also runs in CI on Linux and macOS. |
-| Go, Rust, Zig, C#, Java, PHP, Elixir | Not in CI. Their checks were last run in September 2026 on macOS arm64 and have not been re-run since. Treat a pass as unknown until you run it. |
+| Python, TypeScript | `run.py python typescript` and the harness in quick mode run in CI on Linux for pushes to `main` and for pull requests. Each language's own suite also runs in CI on Linux and macOS. The full harness run passes for both, with no divergences between them. |
+| Go, Rust, Zig, C#, Java, PHP, Elixir | Protocol version 1. Not in CI and not run by the harness. Their checks were last run in September 2026 on macOS arm64 and have not been re-run since. Treat a pass as unknown until you run it. |

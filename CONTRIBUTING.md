@@ -15,11 +15,13 @@ contributing is keeping it that way.
 
 | Implementation | Status |
 |---|---|
-| Python, TypeScript | Supported. Covered by CI and by the [release contract](FINISH_CONTRACT.md). |
-| Go, Rust, Zig, C#, Java, PHP, Elixir | Experimental reference implementations. Fixes are welcome. They are not covered by CI and carry no maintenance promise. |
+| Python, TypeScript | Supported, at protocol version 2. Covered by CI. [STATUS.md](STATUS.md) records what is verified. |
+| Go, Rust, Zig, C#, Java, PHP, Elixir | Experimental reference implementations, still at protocol version 1 and in memory only. Fixes are welcome. They are not covered by CI and carry no maintenance promise. |
 
-A language moves to "supported" when it has a real integration behind it,
-passing CI, and someone who will maintain it.
+A language moves to "supported" when it implements protocol version 2, passes
+the black-box harness and CI, and has someone who will maintain it. Porting one
+of the seven is the most useful large contribution; see
+[conformance/blackbox/README.md](conformance/blackbox/README.md#adding-a-language).
 
 ## Setting up
 
@@ -47,14 +49,22 @@ model through a CLI.
 cd tinyagents/python
 ../../.venv/bin/python -m unittest discover -p 'test_*.py'
 
-# TypeScript
+# TypeScript (the library is sdk.ts; tiny_agent.ts is the CLI entry file)
 cd tinyagents/typescript
 npm run check
 npm test
 
-# Fixtures shared by both, from the repository root
+# From the repository root: the shared fixtures, then the black-box harness
 .venv/bin/python conformance/run.py python typescript
+.venv/bin/python conformance/blackbox/run.py python typescript --quick
+.venv/bin/python conformance/blackbox/run.py python typescript          # everything
 ```
+
+The harness starts each CLI as a process and drives it against a scripted
+model server, killing it, cancelling it and injecting provider faults along
+the way. The quick run takes about a minute per language and the full run
+about two. A failure prints a command that reproduces that one case. Run one
+harness at a time: parallel runs on one machine cause timing failures.
 
 Each experimental language has its own build and check instructions in its
 `README.md`.
@@ -70,8 +80,17 @@ Each experimental language has its own build and check instructions in its
 - **Its tests clean up.** Use the system temp directory. After a test run,
   `git status` must be clean.
 - **It changes the protocol everywhere at once.** If you change behaviour that
-  `PROTOCOL.md` describes, update that file, the fixtures in `conformance/`, and
-  both supported implementations in the same pull request.
+  `PROTOCOL.md` describes, update that file, the harness scenarios in
+  `conformance/blackbox/`, and every version 2 implementation in the same pull
+  request. Copy `PROTOCOL.md` to `tinyagents/go/` and `tinyagents/rust/`
+  afterwards; the runner rejects stale copies. Leave
+  `conformance/rpc_v1.json` alone: three version 1 packages bundle it.
+- **A bug fix comes with a regression test** that fails without the fix.
+- **It upholds the invariants** numbered in [PROTOCOL.md](PROTOCOL.md#invariants):
+  every tool start has one end, a tool's intent is journaled before it runs, a
+  non-idempotent tool never runs twice for one call, the journal is the truth
+  about how a run ended, nothing waits without a bound, and a session stays
+  usable after any failure.
 - **Its documentation is exact.** Say what the code does now. Do not describe
   planned work as finished.
 
@@ -84,7 +103,8 @@ Each experimental language has its own build and check instructions in its
    If something is untested or unverified on a platform, say so.
 
 CI runs the Python suite on Python 3.10, 3.12 and 3.14 and the TypeScript suite
-on Node 22 and 24, each on Linux and macOS.
+on Node 22 and 24, each on Linux and macOS, and on Linux the shared conformance
+run and the black-box harness in quick mode.
 
 ## Security
 

@@ -19,6 +19,7 @@ from tinyagent_types import (
     JsonObject,
     MAX_JSONL_LINE_BYTES,
     MAX_QUEUED_OUTPUT_BYTES,
+    clean,
 )
 
 
@@ -167,8 +168,9 @@ class RpcConnection:
         self, value: JsonObject, cancellation: CancellationToken | None = None
     ) -> None:
         try:
+            # clean(): text that is not valid Unicode is repaired, never a reason to stop.
             data = json.dumps(
-                value, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+                clean(value), separators=(",", ":"), ensure_ascii=False, allow_nan=False
             ).encode("utf-8")
         except Exception as error:
             self._fail(error)

@@ -1,17 +1,18 @@
-import { randomUUID } from "node:crypto";
 import type { Readable, Writable } from "node:stream";
-import type { Agent } from "./tiny_agent.ts";
-import { Session, type SessionOptions } from "./session.ts";
-import { errorMessage, isAbortError, isItem, type Item, type AgentEvent } from "./types.ts";
+import type { Agent } from "./sdk.ts";
+import { Session, ResumeError, SessionFailedError, type SessionOptions } from "./session.ts";
+import { FencedError, SessionBusyError } from "./storage.ts";
+import { errorMessage, isAbortError, isItem, isContentParts, RunError, StorageError, type Item, type AgentEvent,
+  type Content } from "./types.ts";
 import { PROTOCOL_VERSION, MAX_JSONL_LINE_BYTES, MAX_QUEUED_OUTPUT_BYTES } from "./protocol.ts";
 
 /** A run's signal also lets a transport stop waiting for a stalled consumer. */
 export type RpcEmitter = (value: object, signal?: AbortSignal) => void | Promise<void>;
 
 interface ActiveRpcRun {
-  runId: string;
+  /** Known once the run's first event arrives. */
+  runId: string | null;
   controller: AbortController;
-  generation: number;
   done: Promise<void>;
 }
 
@@ -22,7 +23,6 @@ export class RpcSession {
   session: Session;
   private readonly options: SessionOptions;
   private active: ActiveRpcRun | undefined;
-  private generation = 0;
   private closing = false;
 
   constructor(
@@ -48,13 +48,19 @@ export class RpcSession {
       return;
     }
     const id = typeof request.id === "string" ? request.id : undefined;
-    if (command === "prompt" || command === "compact") {
+    // No command is answered about a session whose storage is still loading.
+    await this.session.ready.catch(() => {});
+    if (command === "prompt" || command === "compact" || command === "resume_run") {
       if (this.closing) {
         await this.commandError(id, command, "session_closed", "RPC session is closed");
         return;
       }
-      if (command === "prompt" && (typeof request.message !== "string" || !request.message)) {
+      if (command === "prompt" && !(typeof request.message === "string" ? request.message : isContentParts(request.message))) {
         await this.commandError(id, "prompt", "invalid_command", "prompt.message must be a non-empty string");
+        return;
+      }
+      if (request.messageId !== undefined && (typeof request.messageId !== "string" || !request.messageId)) {
+        await this.commandError(id, command, "invalid_command", "messageId must be a non-empty string");
         return;
       }
       if (this.session.recoveryRequired || (command === "compact" && !this.options.budget)) {
@@ -65,24 +71,16 @@ export class RpcSession {
         await this.commandError(id, command, "busy", "A run is already active");
         return;
       }
-      const active: ActiveRpcRun = {
-        runId: `r_${randomUUID().replaceAll("-", "")}`,
-        controller: new AbortController(),
-        generation: this.generation,
-        done: Promise.resolve(),
-      };
-      const prompt = typeof request.message === "string" ? request.message : "";
+      // The response names the run, so it is written when the run's first event
+      // arrives, or as an error if the session refuses to start one.
+      let answer!: (failure?: unknown) => void;
+      const answered = new Promise<void>((resolve, reject) => {
+        answer = (failure) => (failure === undefined ? resolve() : reject(failure));
+      });
+      const active: ActiveRpcRun = { runId: null, controller: new AbortController(), done: Promise.resolve() };
       this.active = active;
-      const acknowledged = Promise.resolve().then(() =>
-        this.emit(rpcResponse(id, command, { runId: active.runId }), active.controller.signal),
-      );
-      active.done = acknowledged.then(
-        () => this.execute(active, prompt, command === "compact"),
-        () => {
-          if (this.active === active) this.active = undefined;
-        },
-      );
-      await acknowledged;
+      active.done = this.execute(active, id, command, request, answer);
+      await answered;
     } else if (command === "abort") {
       const active = this.active;
       active?.controller.abort();
@@ -97,13 +95,20 @@ export class RpcSession {
       await this.commandError(id, command, "session_closed", "RPC session is closed");
     } else if (command === "new_session") {
       const active = this.active;
-      this.generation += 1;
       if (active) {
         active.controller.abort();
         await active.done;
       }
-      await this.session.close();
-      this.session = new Session(this.agent, { directory: this.options.directory, budget: this.options.budget });
+      try {
+        const created = new Session(this.agent, { ...this.options, sessionId: undefined, resume: false });
+        await created.ready;
+        await this.session.close();
+        this.session = created;
+      } catch (error) {
+        // Every command gets an answer: a store that cannot create a session is reported, not thrown.
+        await this.commandError(id, command, "session_error", errorMessage(error));
+        return;
+      }
       await this.emit(rpcResponse(id, "new_session", { abortedRun: active !== undefined }));
     } else if (command === "get_state") {
       await this.emit(
@@ -112,9 +117,12 @@ export class RpcSession {
           status: this.active ? "running" : "idle",
           runId: this.active?.runId ?? null,
           messageCount: this.session.history.length,
+          resumable: this.session.resumable,
+          paused: this.session.paused ?? null,
+          usage: this.session.usage ?? null,
         }),
       );
-    } else if (["list_sessions", "resume_session", "get_history", "reconcile"].includes(String(command))) {
+    } else if (["list_sessions", "resume_session", "get_history", "get_events", "reconcile", "abandon_run"].includes(String(command))) {
       if (this.active) {
         await this.commandError(id, String(command), "busy", "A run is already active");
         return;
@@ -122,12 +130,14 @@ export class RpcSession {
       let data: Item;
       try {
         if (command === "list_sessions") {
-          data = { sessionIds: this.options.directory ? Session.list(this.options.directory) : [this.session.id] };
+          data = { sessionIds: this.options.storage ? await this.options.storage.list()
+            : this.options.directory ? Session.list(this.options.directory) : [this.session.id] };
         } else if (command === "resume_session") {
-          if (!this.options.directory || typeof request.sessionId !== "string")
+          if ((!this.options.directory && !this.options.storage) || typeof request.sessionId !== "string")
             throw new Error("resume_session requires storage and sessionId");
           if (request.sessionId !== this.session.id) {
-            const resumed = Session.open(this.agent, this.options.directory, request.sessionId, this.options.budget);
+            const resumed = new Session(this.agent, { ...this.options, sessionId: request.sessionId, resume: true });
+            await resumed.ready;
             await this.session.close();
             this.session = resumed;
           }
@@ -138,13 +148,28 @@ export class RpcSession {
               (request.view !== undefined && typeof request.view !== "string"))
             throw new Error("invalid inspection options");
           data = this.session.inspect({ offset: request.offset, limit: request.limit, view: request.view });
+        } else if (command === "get_events") {
+          if ((request.after !== undefined && typeof request.after !== "number") ||
+              (request.limit !== undefined && typeof request.limit !== "number"))
+            throw new Error("invalid event options");
+          data = { ...this.session.events({ after: request.after, limit: request.limit }) };
+        } else if (command === "abandon_run") {
+          if (request.reason !== undefined && typeof request.reason !== "string") throw new Error("reason must be a string");
+          if (!this.session.resumable && !this.session.recoveryRequired) {
+            await this.commandError(id, command, "nothing_to_resume", "session has no interrupted run");
+            return;
+          }
+          await this.session.abandon(request.reason);
+          data = { abandoned: true };
         } else {
           if (typeof request.note !== "string") throw new Error("reconciliation requires a note");
-          this.session.reconcile(request.note);
+          await this.session.reconcile(request.note);
           data = { sessionId: this.session.id, recoveryRequired: false };
         }
       } catch (error) {
-        await this.commandError(id, String(command), "session_error", errorMessage(error));
+        const code = error instanceof StorageError || error instanceof SessionFailedError || error instanceof FencedError
+          ? error.code : "session_error";
+        await this.commandError(id, String(command), code, errorMessage(error));
         return;
       }
       await this.emit(rpcResponse(id, String(command), data));
@@ -187,28 +212,71 @@ export class RpcSession {
     }
   }
 
-  private async execute(active: ActiveRpcRun, prompt: string, compact: boolean): Promise<void> {
+  private async execute(active: ActiveRpcRun, id: string | undefined, command: string, request: Item,
+    answer: (failure?: unknown) => void): Promise<void> {
+    let answered = false;
+    let last: AgentEvent | undefined;
+    // The event that ends the run is held back until the session has recorded the outcome and is idle again.
+    let held: AgentEvent | undefined;
+    let failure: unknown;
     try {
       const options = {
         signal: active.controller.signal,
-        runId: active.runId,
         onEvent: async (event: AgentEvent) => {
+          last = event;
+          if (event.type === "agent_end" || event.type === "compaction_end") held = event;
           try {
-            await this.emit(event, active.controller.signal);
+            if (!answered) {
+              answered = true;
+              active.runId = event.runId;
+              try {
+                await this.emit(rpcResponse(id, command, { runId: event.runId,
+                  ...(command === "prompt" ? { repeated: event.type === "agent_start" && event.repeated === true } : {}) }),
+                  active.controller.signal);
+              } catch (error) {
+                answer(error);
+                throw error;
+              }
+              answer();
+            }
+            if (held !== event) await this.emit(event, active.controller.signal);
           } catch (error) {
             active.controller.abort();
             throw error;
           }
         },
       };
-      if (compact) await this.session.compact(options);
-      else await this.session.run(prompt, options);
+      if (command === "compact") await this.session.compact({ ...options, runId: `r_${this.agent.newId()}` });
+      else if (command === "resume_run") await this.session.resume({ ...options,
+        ...("result" in request ? { result: request.result } : {}),
+        ...("error" in request ? { error: request.error as string } : {}) });
+      else await this.session.run(request.message as Content,
+        { ...options, messageId: typeof request.messageId === "string" ? request.messageId : undefined });
     } catch (error) {
-      if (!active.controller.signal.aborted) this.diagnostics(`run ${active.runId} failed: ${errorMessage(error)}`);
-    } finally {
-      if (this.active === active) {
-        this.active = undefined;
+      failure = error;
+    }
+    if (this.active === active) this.active = undefined;
+    try {
+      if (!answered) {
+        // The session refused before any event: the command fails, and no run existed.
+        await this.commandError(id, command, errorCode(failure, true), errorMessage(failure));
+      } else if (last) {
+        // What the client is told is what the journal holds: a run that did not commit did not complete.
+        const event = last;
+        const reported = held && !(failure !== undefined && "status" in held && held.status === "completed") ? held
+          : command === "compact" ? { type: "compaction_end", runId: event.runId, sequence: event.sequence + (held ? 0 : 1),
+              status: "aborted", error: errorMessage(failure ?? "run aborted") }
+          : { type: "agent_end", runId: event.runId, sequence: event.sequence + (held ? 0 : 1),
+              usage: this.session.usage ?? { inputTokens: 0, outputTokens: 0, requests: 0 },
+              ...(failure === undefined || active.controller.signal.aborted ? { status: "aborted" }
+                : { status: "failed", error: { code: errorCode(failure, false), message: errorMessage(failure), retryable: false } }) };
+        await this.emit(reported);
+        if (failure !== undefined && !active.controller.signal.aborted) this.diagnostics(`run ${active.runId} failed: ${errorMessage(failure)}`);
       }
+    } catch {
+      // The output is gone; there is nobody left to tell.
+    } finally {
+      answer();
     }
   }
 
@@ -445,6 +513,16 @@ async function* rpcLines(input: Readable): AsyncGenerator<string> {
       throw new RpcInputError("invalid_utf8", "RPC input is not valid UTF-8");
     }
   }
+}
+
+/** The name of a failure on the wire. `refusal` is true when no run had started. */
+function errorCode(error: unknown, refusal: boolean): string {
+  if (error instanceof SessionBusyError) return "busy";
+  if (isItem(error) && typeof error.code === "string" && (error instanceof ResumeError || error instanceof FencedError ||
+      error instanceof StorageError || error instanceof SessionFailedError || error instanceof RunError)) return error.code;
+  // A malformed command is invalid_command over RPC, as it has been since version 1.
+  if (refusal) return error instanceof TypeError ? "invalid_command" : "session_error";
+  return "provider_error";
 }
 
 function rpcResponse(id: string | undefined, command: string, data: Item): Item {

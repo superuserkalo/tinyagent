@@ -556,7 +556,12 @@ class RpcTests(unittest.TestCase):
         cls.fixture = json.loads(fixture_path.read_text())
 
     def test_shared_limits_and_static_jsonl_fixtures(self):
-        self.assertEqual(self.fixture["protocolVersion"], PROTOCOL_VERSION)
+        self.assertEqual(PROTOCOL_VERSION, 2)
+        if self.fixture["protocolVersion"] == 1:
+            # conformance/rpc_v1.json still describes version 1. Version 2 adds
+            # three get_state fields; apply them until the shared fixture does.
+            self.fixture["scenarios"][0]["expected"][0]["data"].update(
+                protocolVersion=2, resumable=False, paused=None, usage=None)
         self.assertEqual(
             self.fixture["limits"],
             {
@@ -846,8 +851,10 @@ class RpcTests(unittest.TestCase):
         self.assertEqual(result.text, "recovered")
 
     def test_bash_output_limit(self):
-        with self.assertRaises(ToolOutputLimitError):
-            run_bash(f"python3 -c 'print(\"x\" * {MAX_TOOL_OUTPUT_BYTES + 1})'")
+        # Version 2 (A6): large Bash output is shortened in the middle, not an error.
+        output = run_bash(f"python3 -c 'print(\"x\" * {MAX_TOOL_OUTPUT_BYTES + 1})'")
+        self.assertIn(f"\n[... {MAX_TOOL_OUTPUT_BYTES + 2 - 30_000} bytes elided ...]\n", output)
+        self.assertLess(len(output), 31_000)
 
 
 if __name__ == "__main__":

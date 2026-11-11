@@ -23,6 +23,8 @@ from tinyagent_sse import (
     Arguments,
     MAX_SSE_BYTES,
     http_sse_events as _http_sse_events,
+    merge_headers,
+    token_count,
     index_value,
     object_value,
     parse_object,
@@ -47,8 +49,13 @@ class AnthropicProvider:
         max_tokens: int = 8192,
         *,
         endpoint: str = ANTHROPIC_API,
+        base_url: str | None = None,
+        headers: dict[str, str] | None = None,
+        extra: JsonObject | None = None,
         timeout: float = 180,
     ) -> None:
+        """base_url replaces the API root, headers are added to (or replace) the
+        request headers, and extra is merged into every request body."""
         if (
             isinstance(max_tokens, bool)
             or not isinstance(max_tokens, int)
@@ -57,7 +64,9 @@ class AnthropicProvider:
             raise ValueError("max_tokens must be a positive integer")
         self.api_key = api_key
         self.max_tokens = max_tokens
-        self.endpoint = endpoint
+        self.endpoint = base_url.rstrip("/") + "/messages" if base_url else endpoint
+        self.headers = dict(headers or {})
+        self.extra = dict(extra or {})
         self.timeout = timeout
         self._event_transport = event_transport or self._http_events
 
@@ -68,6 +77,7 @@ class AnthropicProvider:
         history: list[JsonObject],
         tools: Iterable[Tool],
         cancellation: CancellationToken,
+        extra: JsonObject | None = None,
     ) -> Generator[ProviderEvent, None, ProviderTurn]:
         cancellation.raise_if_cancelled()
         payload: JsonObject = {
@@ -94,6 +104,8 @@ class AnthropicProvider:
         terminal = False
         events: Iterator[JsonObject] | None = None
         try:
+            payload.update(self.extra)
+            payload.update(extra or {})
             events = iter(self._event_transport(payload, cancellation))
             for event in events:
                 cancellation.raise_if_cancelled()
@@ -160,6 +172,8 @@ class AnthropicProvider:
                         block.value[field_name] = previous + value
                         if kind == "text_delta" and value:
                             yield ProviderEvent("text_delta", value)
+                        elif kind == "thinking_delta" and value:
+                            yield ProviderEvent("reasoning_delta", value)
                 elif event_type == "message_delta":
                     if message is None:
                         raise ProviderError("Anthropic delta preceded message_start")
@@ -226,7 +240,8 @@ class AnthropicProvider:
             output.append(value)
         replay = {**message, "content": output, "usage": usage}
         return ProviderTurn(
-            "".join(text), _anthropic_assistant(output, calls, replay), output, calls
+            "".join(text), _anthropic_assistant(output, calls, replay), output, calls,
+            token_count(usage, "input_tokens"), token_count(usage, "output_tokens"),
         )
 
     def _http_events(
@@ -235,17 +250,17 @@ class AnthropicProvider:
         key = (
             self.api_key if self.api_key is not None else os.getenv("ANTHROPIC_API_KEY")
         )
-        if not key:
+        if not key and not {"x-api-key", "authorization"} & {name.lower() for name in self.headers}:
             raise ProviderError("ANTHROPIC_API_KEY is not set")
         yield from _http_sse_events(
             self.endpoint,
             payload,
-            {
-                "x-api-key": key,
+            merge_headers({
+                **({"x-api-key": key} if key else {}),
                 "anthropic-version": "2023-06-01",
                 "Content-Type": "application/json",
                 "Accept": "text/event-stream",
-            },
+            }, self.headers),
             cancellation,
             self.timeout,
         )
@@ -256,7 +271,7 @@ def _anthropic_input(history: Iterable[JsonObject]) -> list[JsonObject]:
     for entry in history:
         role = entry.get("role")
         if role == "user":
-            messages.append({"role": "user", "content": entry.get("content", "")})
+            messages.append({"role": "user", "content": _anthropic_content(entry.get("content", ""))})
         elif role == "assistant":
             metadata = entry.get("providerMetadata")
             replay = (
@@ -267,7 +282,8 @@ def _anthropic_input(history: Iterable[JsonObject]) -> list[JsonObject]:
             )
             content = replay.get("content") if isinstance(replay, dict) else None
             if isinstance(content, list):
-                messages.append({"role": "assistant", "content": content})
+                if content:  # an empty assistant turn is not a valid message; leave it out
+                    messages.append({"role": "assistant", "content": content})
                 continue
             blocks: list[JsonObject] = []
             for block in entry.get("content", []):
@@ -293,7 +309,7 @@ def _anthropic_input(history: Iterable[JsonObject]) -> list[JsonObject]:
             result: JsonObject = {
                 "type": "tool_result",
                 "tool_use_id": entry.get("callId"),
-                "content": entry.get("output", ""),
+                "content": _anthropic_content(entry.get("output", "")),
                 "is_error": bool(entry.get("isError", False)),
             }
             previous_content = (
@@ -312,6 +328,21 @@ def _anthropic_input(history: Iterable[JsonObject]) -> list[JsonObject]:
             # Accept Anthropic-native messages for migration.
             messages.append(entry)
     return messages
+
+
+def _anthropic_content(content: object) -> object:
+    """Text stays a string; a list of parts becomes Messages content blocks."""
+    if not isinstance(content, list):
+        return content
+    blocks: list[JsonObject] = []
+    for part in content:
+        if part.get("type") == "text":
+            blocks.append({"type": "text", "text": part.get("text", "")})
+        elif part.get("type") == "image":
+            source = ({"type": "url", "url": part["url"]} if part.get("url") else
+                      {"type": "base64", "media_type": part.get("mediaType"), "data": part.get("data")})
+            blocks.append({"type": "image", "source": source})
+    return blocks
 
 
 def _anthropic_assistant(

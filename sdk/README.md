@@ -1,15 +1,25 @@
 # TinyAgent SDK reference
 
-This page is the cross-language reference for the TinyAgent SDKs: what each
-language provides, the names of its entry points, and the rules they share.
+This page is the cross-language reference for the protocol version 1
+in-memory core: the part of TinyAgent that all nine languages have. It lists
+what each language provides, the names of its entry points, and the rules they
+share.
+
+Python and TypeScript implement protocol version 2, which adds a storage
+interface, resume, pause, replayable events, hooks, typed output, limits,
+retries, a third provider, images and approval. This page does not describe
+those. For version 2 read [PROTOCOL.md](../PROTOCOL.md), the
+[Python guide](../tinyagents/python/README.md) and the
+[TypeScript guide](../tinyagents/typescript/README.md).
+
 There is no code under `sdk/`. Each implementation lives in
 `tinyagents/<language>/` and shares one agent loop with its coding CLI, its RPC
 mode and its HTTP server.
 
 Read this page with:
 
-- [PROTOCOL.md](../PROTOCOL.md), the contract for events, RPC, HTTP, sessions
-  and limits.
+- [PROTOCOL.md](../PROTOCOL.md), the version 2 contract. Its opening says
+  which parts the version 1 implementations have.
 - The per-language guides linked in the table below, which hold the full
   examples and build instructions.
 
@@ -17,8 +27,8 @@ Read this page with:
 
 | Language | Status | Runtime | Sessions |
 | --- | --- | --- | --- |
-| [Python](../tinyagents/python/README.md) | Supported, in CI | Python 3.10 or newer | In memory or durable |
-| [TypeScript](../tinyagents/typescript/README.md) | Supported, in CI | Node.js 22.18 or newer | In memory or durable |
+| [Python](../tinyagents/python/README.md) | Supported, in CI, protocol version 2 | Python 3.10 or newer | Any `Storage`; memory and JSONL file stores included |
+| [TypeScript](../tinyagents/typescript/README.md) | Supported, in CI, protocol version 2 | Node.js 22.18 or newer | Any `Storage`; memory and JSONL file stores included |
 | [Go](../tinyagents/go/README.md) | Experimental | Go 1.26.4 | In memory |
 | [Rust](../tinyagents/rust/README.md) | Experimental | Cargo; checked with Rust 1.96.1 | In memory |
 | [Zig](../tinyagents/zig/README.md) | Experimental | Zig 0.16.0, plus Cargo to build | In memory |
@@ -27,17 +37,15 @@ Read this page with:
 | [PHP](../tinyagents/php/README.md) | Experimental | PHP 8.4, Composer | In memory |
 | [Elixir](../tinyagents/elixir/README.md) | Experimental | Elixir 1.15 or newer, C compiler | In memory |
 
-Python and TypeScript are the supported implementations. They add a durable
-`Session` (an append-only JSONL journal with a writer lock), resume, recovery
-after an interrupted tool, and compaction, together with the RPC commands and
-HTTP routes in PROTOCOL.md's
-[Durable sessions and compaction](../PROTOCOL.md#durable-sessions-and-compaction)
-section.
+Python and TypeScript are the supported implementations and are at protocol
+version 2. Everything they add beyond this page is in
+[PROTOCOL.md](../PROTOCOL.md) and their guides.
 
-The other seven are experimental reference implementations of the in-memory
-core. They implement tools, both providers, events, cancellation, RPC and the
-five baseline HTTP routes. They do not persist sessions, resume, recover or
-compact, and they are not in CI.
+The other seven are experimental reference implementations of the version 1
+in-memory core and report `protocolVersion: 1`. They implement tools, the
+OpenAI Responses and Anthropic Messages providers, events, cancellation, RPC
+and the five baseline HTTP routes. They do not persist sessions, resume, pause,
+replay or compact, and they are not in CI.
 
 ## Concepts
 
@@ -45,16 +53,18 @@ compact, and they are not in CI.
   handler.
 - `Provider`: the model adapter. Every language has an OpenAI Responses
   provider and an Anthropic Messages provider, both streaming, and accepts a
-  custom provider.
+  custom provider. Python and TypeScript also have a Chat Completions provider.
 - `Agent`: a model, instructions, a provider and tools. It holds no
   conversation. A run takes a prompt and prior history and returns final text
   and the new history.
 - Events: ordered values carrying a run ID and a sequence number that starts
-  at one. PROTOCOL.md lists the types and payloads.
+  at one. The version 1 types are `agent_start`, `text_delta`,
+  `tool_execution_start`, `tool_execution_end` and `agent_end`. PROTOCOL.md
+  lists their payloads and the fields version 2 adds.
 - Run result: final text, provider-neutral replayable history, and the final
   raw provider output.
 - `Session`: one conversation. In Python and TypeScript it is a public class
-  that owns history and can store it durably. Zig exports an in-memory
+  that owns history and journals it through a `Storage`. Zig exports an in-memory
   `Session`. In the other languages the in-memory session sits behind the RPC
   and HTTP adapters; SDK callers use `RpcSession` where it exists, or pass
   history between runs themselves.
@@ -81,8 +91,8 @@ history unchanged.
 
 | Language | JSONL RPC | HTTP server | Server handle |
 | --- | --- | --- | --- |
-| Python | `run_rpc(agent, ...)`, `RpcSession` | `serve(agent, host=, port=, token=, allow_remote=, directory=, budget=)` | `url`, `close()`, context manager |
-| TypeScript | `runRpc(agent, input, output, options)`, `RpcSession` | `await serve(agent, { host, port, token, allowRemote, directory, budget })` | `url`, `close()` |
+| Python | `run_rpc(agent, ...)`, `RpcSession` | `serve(agent, host=, port=, token=, allow_remote=, directory=, storage=, budget=, allowed_hosts=, allowed_origins=)` | `url`, `close()`, context manager |
+| TypeScript | `runRpc(agent, input, output, options)`, `RpcSession` | `await serve(agent, { host, port, token, allowRemote, directory, storage, budget, allowedHosts, allowedOrigins })` | `url`, `close()` |
 | Go | `RunRPC(ctx, agent, input, output)` | `Serve(agent, HTTPOptions{Address, Token, AllowRemote})` | `URL()`, `Close()`, `Wait()` |
 | Rust | `run_rpc(agent, input, output, cancellation)` | `serve(agent, HttpOptions { address, token, allow_remote })` | `url()`, `close()`, `wait()` |
 | Zig | `runRpc(allocator, io, agent, input, output, options)` | `HttpServer.start(allocator, io, agent, options)` | `url`, `stop()`, `wait()`, `deinit()` |
@@ -97,8 +107,8 @@ byte limits and I/O cleanup.
 
 | Language | Schema validator | HTTP server library | CLI providers |
 | --- | --- | --- | --- |
-| Python | `jsonschema` 4.26.0 | standard library `http.server` | OpenAI, Anthropic |
-| TypeScript | Ajv 8.20.0 | `node:http` | OpenAI, Anthropic |
+| Python | `jsonschema` 4.26.0 | standard library `http.server` | OpenAI, Anthropic, Chat Completions |
+| TypeScript | Ajv 8.20.0 | `node:http` | OpenAI, Anthropic, Chat Completions |
 | Go | `kaptinlin/jsonschema` 0.9.2 | `net/http` | OpenAI, Anthropic |
 | Rust | `jsonschema` crate 0.30.0 | Hyper | OpenAI, Anthropic |
 | Zig | the Rust `jsonschema` crate 0.30.0, statically linked ([notes](../docs/zig-schema-validation.md)) | Zig standard library | OpenAI, Anthropic |
@@ -107,9 +117,10 @@ byte limits and I/O cleanup.
 | PHP | Opis JSON Schema 2.6.0 | ReactPHP | OpenAI |
 | Elixir | JSV 0.22.0 | Bandit | OpenAI |
 
-"CLI providers" is what each coding CLI can select. Every SDK exports both
-providers regardless. The CLIs that support both read `TINYAGENT_PROVIDER`
-(`openai` or `anthropic`). All CLIs read `TINYAGENT_MODEL`.
+"CLI providers" is what each coding CLI can select. Every SDK exports the
+OpenAI Responses and Anthropic Messages providers regardless. The CLIs that
+support more than one read `TINYAGENT_PROVIDER` (`openai` or `anthropic`, and
+`chat` in Python and TypeScript). All CLIs read `TINYAGENT_MODEL`.
 
 ## Python
 
@@ -146,17 +157,18 @@ result = agent.run(
 print(result.text)
 ```
 
-`Agent` uses `OpenAIProvider` unless you pass `provider=AnthropicProvider()`.
-Providers accept `endpoint` and `timeout` (180 seconds by default) and read
-their API key when a request starts. Providers and tools are synchronous.
+`Agent` uses `OpenAIProvider` unless you pass another provider, such as
+`provider=AnthropicProvider()`. Providers accept `base_url`, `headers`, `extra`
+and `timeout` (180 seconds by default) and read their API key when a request
+starts. Providers and tools are synchronous.
 Cancel a run with a `CancellationToken` passed as `cancellation=`.
 
 When you iterate `Agent.stream` or `Session.stream` directly, wrap it in
 `contextlib.closing` if you may stop early. A Python `for` loop does not close
 an iterator on `break`.
 
-The [Python guide](../tinyagents/python/README.md) covers `Session`,
-`ContextBudget`, resume, recovery and compaction.
+The [Python guide](../tinyagents/python/README.md) covers `Session`, storage,
+resume, pause, hooks, typed output and compaction.
 
 ## TypeScript
 
@@ -194,13 +206,13 @@ const result = await agent.run("Echo hello", [], {
 console.log(result.text);
 ```
 
-`Agent` uses `OpenAIProvider` unless you pass `provider: new AnthropicProvider()`.
-Providers accept `endpoint`, `timeoutMs` (180 seconds by default) and `fetch`,
-and read their API key when a request starts. Tool handlers may be synchronous
+`Agent` uses `OpenAIProvider` unless you pass another provider, such as
+`provider: new AnthropicProvider()`. Providers accept `baseUrl`, `headers` and
+`extra`, and read their API key when a request starts. Tool handlers may be synchronous
 or asynchronous. Cancel a run with an `AbortSignal` passed as `signal`.
 
 The [TypeScript guide](../tinyagents/typescript/README.md) covers `Session`,
-the context budget, resume, recovery and compaction.
+storage, resume, pause, hooks, typed output and compaction.
 
 ## Tools
 
@@ -218,6 +230,8 @@ Tool parameters use JSON Schema Draft 2020-12 in every language.
   error.
 - Tools run one at a time. Handlers receive the run's cancellation signal and
   must honor it.
+- In Python and TypeScript an unknown tool name is also a recoverable tool
+  error, and a tool may be marked `idempotent` or given a timeout.
 
 The shared cases are in
 [`conformance/tool_arguments.json`](../conformance/tool_arguments.json).
@@ -244,8 +258,10 @@ per line on stdin and writes responses and events as JSONL on stdout.
 Diagnostics go to stderr.
 
 All nine languages implement `prompt`, `abort`, `new_session` and `get_state`.
-Python and TypeScript also implement `list_sessions`, `resume_session`,
-`get_history`, `reconcile` and `compact`.
+Python and TypeScript also implement `resume_run`, `abandon_run`,
+`get_events`, `get_history`, `compact`, `reconcile`, `list_sessions` and
+`resume_session`, and their `get_state` reports `protocolVersion: 2` with
+`resumable`, `paused` and `usage`.
 
 A prompt is acknowledged before its first event. Only a completed run whose
 terminal event was delivered commits history.
@@ -264,8 +280,10 @@ GET    /health
 ```
 
 Python and TypeScript add `GET /sessions`, `GET /sessions/:id`,
-`POST /sessions/:id/compact`, `POST /sessions/:id/reconcile`, and resuming a
-stored session through `POST /sessions`.
+`POST /sessions/:id/resume`, `POST /sessions/:id/abandon`,
+`GET /sessions/:id/events`, `POST /sessions/:id/compact`,
+`POST /sessions/:id/reconcile`, and reopening a stored session through
+`POST /sessions`.
 
 Rules common to all servers:
 
@@ -276,7 +294,11 @@ Rules common to all servers:
 - No CORS headers are added. TLS is not implemented; terminate HTTPS in a
   reverse proxy.
 - A prompt response is JSONL: `agent_start` first, `agent_end` last.
-  Disconnecting it cancels the run.
+  Disconnecting it cancels the run. (In Python and TypeScript a prompt sent
+  with `"detach": true` keeps running.)
+- Python and TypeScript also refuse a request whose `Host` header does not
+  name the server (421) or that carries an `Origin` header not on the allowed
+  list (403).
 - Closing the server cancels active runs and waits for cooperative cleanup.
 
 The Python, TypeScript, C#, Java, PHP and Elixir CLIs read `TINYAGENT_HOST`,
@@ -299,10 +321,10 @@ All implementations apply the limits in PROTOCOL.md, measured in UTF-8 bytes:
 
 | Languages | Evidence |
 | --- | --- |
-| Python | 128 tests. CI on Linux and macOS with Python 3.10, 3.12 and 3.14. |
-| TypeScript | 119 tests. CI on Linux and macOS with Node.js 22 and 24. |
+| Python | 267 unit tests, and 515 black-box harness cases. CI on Linux and macOS with Python 3.10, 3.12 and 3.14. |
+| TypeScript | 206 unit tests, and 515 black-box harness cases. CI on Linux and macOS with Node.js 22 and 24. |
 | Go, Rust, Zig, C#, Java, PHP, Elixir | Not in CI. Last verified in September 2026 on macOS arm64 and not re-run since. Linux and Windows are unverified. |
 
-[conformance/README.md](../conformance/README.md) describes the shared fixtures
-and the runner. [FINISH_CONTRACT.md](../FINISH_CONTRACT.md) records the release
-requirements and evidence for Python and TypeScript.
+[conformance/README.md](../conformance/README.md) describes the shared
+fixtures, the runner and the black-box harness. [STATUS.md](../STATUS.md)
+records what is verified for Python and TypeScript and the known limits.

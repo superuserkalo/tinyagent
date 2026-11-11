@@ -95,7 +95,7 @@ test("HTTP defaults, authentication, exposure, and unknown routes", async (t) =>
     assert.equal(response.headers.get("access-control-allow-origin"), null);
   }
   const health = await fetch(`${server.url}/health`, { headers: { Authorization: "Bearer secret" } });
-  assert.deepEqual(await health.json(), { status: "ok", protocolVersion: 1 });
+  assert.deepEqual(await health.json(), { status: "ok", protocolVersion: 2 });
   const id = await session(server, "secret");
   assert.ok(id);
   const unknown = await fetch(`${server.url}/missing`, { headers: { Authorization: "Bearer secret" } });
@@ -222,7 +222,7 @@ test("HTTP disconnect cancels tools and retains prior history", async (t) => {
             ...turn(""),
             toolCalls: [{ callId: "tool_1", name: "wait", arguments: {} }],
           };
-        if (runs === 3) assert.equal(request.history.length, 4);
+        if (runs === 3) assert.equal(request.history.length, 3);
         return turn("done");
       },
     },
@@ -242,14 +242,12 @@ test("HTTP disconnect cancels tools and retains prior history", async (t) => {
   controller.abort();
   await response.body?.cancel().catch(() => {});
   await toolStopped.promise;
-  const rejected = await prompt(server, id, "retry");
-  assert.equal(rejected.status, 409);
-  await rejected.arrayBuffer();
+  // A cancelled run never needs reconciling: the next prompt is accepted, and reconcile has nothing to do.
   const reconciled = await fetch(`${server.url}/sessions/${id}/reconcile`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ note: "The wait tool stopped without external effects." }),
   });
-  assert.equal(reconciled.status, 200);
+  assert.equal(reconciled.status, 400);
   await reconciled.arrayBuffer();
   const recovered = await events(await prompt(server, id, "retry"));
   assert.equal(recovered.at(-1)?.status, "completed");

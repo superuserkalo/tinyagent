@@ -204,7 +204,7 @@ def main() -> int:
     print("\nNative check results", flush=True)
     for language, status in results.items():
         print(f"  {language}: {status}")
-    print("The finish contract also requires packaging and a final acceptance audit.")
+    print("For Python and TypeScript, also run conformance/blackbox/run.py. See STATUS.md.")
     return 0 if all(status == "CHECKS PASSED" for status in results.values()) else 1
 
 

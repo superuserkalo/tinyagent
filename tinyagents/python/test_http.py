@@ -104,7 +104,7 @@ class HttpTests(unittest.TestCase):
             self.assertIsNone(response.getheader("Access-Control-Allow-Origin"))
         _, response = self.call(server, "GET", "/health", token="secret")
         self.assertEqual(
-            json.loads(response.read()), {"status": "ok", "protocolVersion": 1}
+            json.loads(response.read()), {"status": "ok", "protocolVersion": 2}
         )
         self.session(server, token="secret")
         _, response = self.call(server, "GET", "/missing", token="secret")

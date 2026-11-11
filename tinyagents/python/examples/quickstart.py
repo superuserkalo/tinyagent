@@ -122,12 +122,10 @@ def resume(directory: str, session_id: str) -> None:
     with Session.open(build_agent(), directory, session_id, budget=BUDGET) as session:
         print(f"resumed {session.id} with {len(session.history)} messages")
 
-        if session.recovery_required:
-            # The cancelled run had already called a tool. TinyAgent never
-            # repeats it for you: inspect session.records, check the effect
-            # yourself, then describe what you found. The model sees this note.
-            session.reconcile("read_notes only reads. Nothing to repeat or undo.")
-            print("reconciled the interrupted tool call")
+        if session.resumable:
+            # The first process died in the middle of a run. Pick it up where
+            # the journal stops instead of starting over.
+            session.resume(on_event=show)
 
         session.run("Which open item comes first?", on_event=show)
 

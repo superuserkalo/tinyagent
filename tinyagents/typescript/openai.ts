@@ -1,6 +1,8 @@
 import {
   ProviderError,
   isItem,
+  isContentParts,
+  imageUrl,
   errorMessage,
   abortError,
   throwIfAborted,
@@ -52,10 +54,13 @@ export class OpenAIProvider implements Provider {
       store: false,
       include: ["reasoning.encrypted_content"],
       stream: true,
+      ...this.options.extra,
+      ...request.extra,
     };
     const output = new Map<number, Item>();
     const argumentsByIndex = new Map<number, Arguments>();
     let terminal = false;
+    let usage: ProviderTurn["usage"];
     try {
       for await (const event of this.eventTransport(payload, request.signal)) {
         throwIfAborted(request.signal);
@@ -72,6 +77,9 @@ export class OpenAIProvider implements Provider {
             }
           }
           output.set(index, item);
+        } else if (type === "response.reasoning_summary_text.delta" || type === "response.reasoning_text.delta") {
+          const delta = stringValue(event, "delta");
+          if (delta) yield { type: "reasoning_delta", delta };
         } else if (type === "response.output_text.delta") {
           const delta = stringValue(event, "delta");
           if (delta) yield { type: "text_delta", delta };
@@ -96,6 +104,9 @@ export class OpenAIProvider implements Provider {
             for (const [index, item] of objectArray(response.output, "output").entries())
               output.set(index, structuredClone(item));
           }
+          if (isItem(response.usage) && typeof response.usage.input_tokens === "number" &&
+              typeof response.usage.output_tokens === "number")
+            usage = { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens };
           terminal = true;
           break;
         } else if (type === "response.failed" || type === "response.incomplete" || type === "error") {
@@ -113,14 +124,16 @@ export class OpenAIProvider implements Provider {
       if (item.type === "function_call" && !item.arguments && argumentsByIndex.has(index))
         item.arguments = argumentsByIndex.get(index)?.value();
     }
-    return openAITurn([...output.entries()].sort(([a], [b]) => a - b).map(([, item]) => item));
+    const turn = openAITurn([...output.entries()].sort(([a], [b]) => a - b).map(([, item]) => item));
+    return usage ? { ...turn, usage } : turn;
   }
 
   private async *httpEvents(payload: Item, signal: AbortSignal): AsyncGenerator<Item> {
     const key = this.options.apiKey ?? process.env.OPENAI_API_KEY;
-    if (!key) throw new ProviderError("OPENAI_API_KEY is not set");
+    if (!key && !Object.keys(this.options.headers ?? {}).some((name) => name.toLowerCase() === "authorization"))
+      throw new ProviderError("OPENAI_API_KEY is not set");
     yield* httpSseEvents(
-      this.options.endpoint ?? OPENAI_API,
+      this.options.endpoint ?? (this.options.baseUrl ? this.options.baseUrl.replace(/\/+$/, "") + "/responses" : OPENAI_API),
       payload,
       { Authorization: "Bearer " + key, "Content-Type": "application/json", Accept: "text/event-stream" },
       signal,
@@ -189,7 +202,7 @@ function openAIInput(history: Item[]): Item[] {
   const providerInput: Item[] = [];
   for (const entry of history) {
     if (entry.role === "user") {
-      providerInput.push({ role: "user", content: entry.content ?? "" });
+      providerInput.push({ role: "user", content: openAIContent(entry.content ?? "") });
     } else if (entry.role === "assistant") {
       const metadata = isItem(entry.providerMetadata) ? entry.providerMetadata : undefined;
       if (metadata?.provider === "openai-responses" && Array.isArray(metadata.output)) {
@@ -214,7 +227,7 @@ function openAIInput(history: Item[]): Item[] {
       providerInput.push({
         type: "function_call_output",
         call_id: entry.callId,
-        output: entry.output ?? "",
+        output: openAIContent(entry.output ?? ""),
       });
     } else {
       // Accept pre-0.0.1 OpenAI-native history for migration.
@@ -222,6 +235,13 @@ function openAIInput(history: Item[]): Item[] {
     }
   }
   return providerInput;
+}
+
+/** Text stays a string; a list of parts becomes Responses input parts. */
+function openAIContent(content: unknown): unknown {
+  if (!isContentParts(content)) return content;
+  return content.map((part) => part.type === "text" ? { type: "input_text", text: part.text }
+    : { type: "input_image", image_url: imageUrl(part) });
 }
 
 function assistantMessage(output: Item[], calls: ToolCall[], text: string): Item {

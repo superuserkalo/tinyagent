@@ -136,11 +136,12 @@ test("tool intent precedes execution and results survive failed event delivery",
   await session.close();
   const resumed = Session.open(agent, directory, session.id);
   try {
-    assert.equal(resumed.recoveryRequired, true);
-    await assert.rejects(resumed.run("retry"), RecoveryRequiredError);
-    assert.equal(calls, 1);
-    resumed.reconcile("Checked the effect. It completed; do not repeat it.");
+    // The tool finished and its result is journaled, so nothing is uncertain.
     assert.equal(resumed.recoveryRequired, false);
+    assert.equal(resumed.resumable, false);
+    assert.deepEqual(resumed.records.filter((record) => String(record.type).startsWith("tool_")).map((record) => record.type),
+      ["tool_intent", "tool_result"]);
+    assert.equal(calls, 1);
   } finally { await resumed.close(); }
 });
 
@@ -200,7 +201,7 @@ test("invalid or cancelled compaction installs nothing", async () => {
   } finally { await session.close(); }
 });
 
-test("process crash releases the writer lock and never replays uncertain tools", async (t) => {
+test("D05 a crash mid-tool with onUncertain reconcile releases the lock and waits for reconcile", async (t) => {
   const directory = mkdtempSync(join(scratch, "ta-session-"));
   t.after(() => rmSync(directory, { recursive: true }));
   const script = join(directory, "crash.mjs");
@@ -215,14 +216,18 @@ await session.run('go');\n`);
   const agent = new Agent({ model: "offline", provider: new OfflineProvider(), tools: [new Tool({
     name: "effect", description: "Effect", parameters: { type: "object" }, handler: () => { calls += 1; },
   })] });
-  const resumed = Session.open(agent, directory, "s_crashed");
+  const resumed = new Session(agent, { directory, sessionId: "s_crashed", resume: true, onUncertain: "reconcile" });
   try {
     assert.equal(resumed.recoveryRequired, true);
+    assert.equal(resumed.resumable, false);
     await assert.rejects(resumed.run("retry"), RecoveryRequiredError);
+    await assert.rejects(resumed.resume(), RecoveryRequiredError);
     assert.equal(calls, 0);
     assert.deepEqual(resumed.history, []);
     assert.equal(resumed.records.at(-1)?.type, "tool_intent");
-    resumed.reconcile("The effect did not complete; it is safe to continue.");
+    await resumed.reconcile("The effect did not complete; it is safe to continue.");
+    assert.equal(resumed.recoveryRequired, false);
+    assert.equal(resumed.resumable, false);
   } finally { await resumed.close(); }
   const continued = Session.open(agent, directory, "s_crashed");
   try {
@@ -265,7 +270,7 @@ test("an oversized pending prompt cannot activate an unusable checkpoint", async
   } finally { await session.close(); }
 });
 
-test("sessions reject concurrent operations and configuration changes", async () => {
+test("D31 sessions reject concurrent operations and record a configuration change", async () => {
   const agent = new Agent({ model: "offline", provider: new OfflineProvider() });
   const session = new Session(agent);
   try {
@@ -274,7 +279,8 @@ test("sessions reject concurrent operations and configuration changes", async ()
     await assert.rejects(session.run("concurrent"), SessionBusyError);
     await stream.return(undefined as never);
     agent.tools.set("new", new Tool({ name: "new", description: "New", parameters: {}, handler: () => "done" }));
-    await assert.rejects(session.run("go"), /configuration changed/);
+    await session.run("go");
+    assert.deepEqual(session.records.filter((record) => record.type === "configuration").map((record) => record.tools), [["new"]]);
   } finally { await session.close(); }
 });
 
@@ -382,7 +388,7 @@ setInterval(() => {}, 1000);\n`);
   await resumed.close();
 });
 
-test("damaged complete records are corruption and an unknown ID creates nothing", async (t) => {
+test("D31 damaged complete records are corruption, an unknown ID creates nothing, a changed agent reopens", async (t) => {
   const directory = mkdtempSync(join(scratch, "ta-session-"));
   t.after(() => rmSync(directory, { recursive: true }));
   const agent = new Agent({ model: "offline", provider: new OfflineProvider() });
@@ -410,9 +416,20 @@ test("damaged complete records are corruption and an unknown ID creates nothing"
   await repaired.close();
   assert.throws(() => Session.open(agent, directory, "s_missing"), { code: "ENOENT" });
   assert.equal(fs.readdirSync(directory).some((name) => name.startsWith("s_missing")), false);
-  const other = new Agent({ model: "offline", instructions: "Different.", provider: new OfflineProvider() });
-  assert.throws(() => Session.open(other, directory, session.id), /differ from the saved configuration/);
-  await Session.open(agent, directory, session.id).close();
+  // D31: a changed agent may continue the session, and the journal records the change.
+  const other = new Agent({ model: "offline", instructions: "Different.", provider: new OfflineProvider(), tools: [lookup()] });
+  const changed = Session.open(other, directory, session.id);
+  assert.deepEqual({ ...changed.records.at(-1), configuration: "", sequence: 0 }, { type: "configuration", configuration: "",
+    model: "offline", instructions: "Different.", tools: ["lookup"], version: 1, sequence: 0 });
+  await changed.run("second");
+  assert.equal(changed.history.length, 4);
+  await changed.close();
+  const back = Session.open(agent, directory, session.id);
+  assert.equal(back.records.filter((record) => record.type === "configuration").length, 2);
+  await back.close();
+  const same = Session.open(agent, directory, session.id);
+  assert.equal(same.records.filter((record) => record.type === "configuration").length, 2, "an unchanged agent records nothing");
+  await same.close();
 });
 
 test("a failed journal write stops the run before its tool executes", async (t) => {
@@ -438,8 +455,12 @@ test("a failed journal write stops the run before its tool executes", async (t) 
   try {
     assert.deepEqual(resumed.history, []);
     assert.equal(resumed.recoveryRequired, false);
-    await resumed.run("again");
+    // The run was left open with its prompt journaled: version 2 continues it instead of starting over.
+    assert.equal(resumed.resumable, true);
+    await assert.rejects(resumed.run("again"), { code: "resume_required" });
+    await resumed.resume();
     assert.equal(calls, 1);
+    assert.equal(resumed.records.find((record) => record.type === "run_commit")?.type, "run_commit");
   } finally { await resumed.close(); }
 });
 

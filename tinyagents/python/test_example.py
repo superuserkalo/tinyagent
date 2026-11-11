@@ -127,14 +127,13 @@ class QuickstartExampleTests(unittest.TestCase):
             "cancelled; history still has 4 messages",
             f"session {identifier} saved in {directory}; restarting",
             f"resumed {identifier} with 4 messages",
-            "reconciled the interrupted tool call",
             "The changelog entry, because it needs a review.",
             "[run completed]",
             "[compaction completed]",
             "Write and review the changelog, then upload the wheel.",
             "[run completed]",
             "final answer: Write and review the changelog, then upload the wheel.",
-            "9 messages in history, 24 records on disk",
+            "8 messages in history, 19 records on disk",
         ])
 
         # The provider saw the tool result, a tool-free summary request, and
@@ -159,12 +158,12 @@ class QuickstartExampleTests(unittest.TestCase):
             self.assertEqual(session.recovery_notes, [])
             kinds = [record["type"] for record in session.records]
             self.assertEqual([kinds.count(kind) for kind in
-                              ("run_start", "run_commit", "run_failed", "tool_intent", "reconciled", "checkpoint")],
-                             [4, 3, 1, 2, 1, 1])
+                              ("run_start", "run_commit", "run_failed", "tool_intent", "tool_result",
+                               "reconciled", "checkpoint")],
+                             [4, 3, 1, 2, 2, 0, 1])
             self.assertEqual([item["role"] for item in session.history],
-                             ["user", "assistant", "tool_result", "assistant", "user",
+                             ["user", "assistant", "tool_result", "assistant",
                               "user", "assistant", "user", "assistant"])
-            self.assertTrue(session.history[4]["content"].startswith("Interrupted run recovery:"))
 
 
 if __name__ == "__main__":
