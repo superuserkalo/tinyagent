@@ -1,0 +1,16 @@
+{
+  "name": "tinyagent-html-builder",
+  "private": true,
+  "type": "module",
+  "description": "A durable HTML artifact builder: the TinyAgent TypeScript SDK's showcase demo",
+  "license": "MIT",
+  "scripts": {
+    "start": "node server.ts",
+    "demo": "node server.ts --scripted --allow-kill",
+    "test": "node --test kill_resume.test.ts",
+    "check": "node ../../tinyagents/typescript/node_modules/typescript/bin/tsc -p tsconfig.json"
+  },
+  "engines": {
+    "node": ">=22.18"
+  }
+}

@@ -1,6 +1,6 @@
 # TinyAgent status
 
-As of 2026-11-11. Version 0.0.1, protocol version 2 in Python and TypeScript.
+As of 2026-11-11. Version 0.2.0, protocol version 2 in Python and TypeScript.
 
 [PROTOCOL.md](PROTOCOL.md) is the contract. This page says how much of it is
 verified, what is known not to be, and what comes next.
@@ -46,8 +46,29 @@ badge in the [README](README.md) shows its current state.
 - **Windows is untested.**
 - **Real providers.** The examples and tests have run against local fake
   providers only, never against the real OpenAI or Anthropic APIs.
-- **Nothing is published** to PyPI or npm, and the npm package is still marked
-  private. Install from a clone.
+- **Nothing is published** to PyPI or npm yet. Install from a clone.
+- **Limits the HTML builder demo ran into**, building on the TypeScript SDK as
+  an outside consumer would:
+  - `serve()` cannot share a port with your own routes; it returns only a URL
+    and a close function. The demo runs the SDK's server on a second loopback
+    port behind a forwarder.
+  - `allowedOrigins` lets a listed origin past the Origin check, but the server
+    sends no CORS headers and answers no preflight, so a browser page on
+    another origin still cannot call it. Same-origin through a proxy works.
+  - An HTTP prompt cannot set a per-run `model`, `instructions` or `extra`,
+    and `context` cannot be supplied under `serve()`.
+  - The tool context has no session ID; it can be read from the front of
+    `executionId`.
+  - Events do not carry the user's prompt. Rebuilding a transcript means
+    paging `view=records`.
+  - A follower reading from its last cursor does not see the `agent_start` of
+    a resumed run, because it reuses the original run's cursor.
+  - Opening a session that is already open is a `409`; there is no idempotent
+    open.
+  - `ScriptedProvider` plays its script once and keeps its position in memory,
+    so a crash-and-resume test has to derive the next turn from history.
+  - Tool arguments are not streamed, so a published page appears a version at
+    a time.
 - **Node.js 22** prints an `ExperimentalWarning` for `node:sqlite` on stderr
   the first time a process uses a durable session. Node.js 24 and later do not.
 - **Python threads cannot be killed.** A handler, hook or provider that ignores

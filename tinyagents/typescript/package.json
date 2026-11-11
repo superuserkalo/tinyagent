@@ -1,15 +1,20 @@
 {
   "name": "tiny-agent-sdk",
-  "version": "0.0.1",
+  "version": "0.2.0",
   "description": "A small agent SDK: validated tools, streaming, cancellation, durable sessions, resume, and compaction",
-  "keywords": ["agent", "llm", "tools", "openai", "anthropic"],
+  "keywords": [
+    "agent",
+    "llm",
+    "tools",
+    "openai",
+    "anthropic"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/superuserkalo/tinyagent.git",
     "directory": "tinyagents/typescript"
   },
-  "private": true,
   "type": "module",
   "files": [
     "dist",

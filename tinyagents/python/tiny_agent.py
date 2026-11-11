@@ -62,7 +62,7 @@ from tinyagent_session import (Session, ContextBudget, NothingToResumeError,
 from tinyagent_storage import (FileStorage, MemoryStorage, SessionBusyError, SessionCorruptionError,
                                SessionFailedError, SessionFencedError, Storage, StorageError, check_storage)
 
-__version__ = "0.0.1"
+__version__ = "0.2.0"
 
 MODEL = "gpt-5.6"
 INSTRUCTIONS = """You are TinyAgent, a coding agent in the current directory.

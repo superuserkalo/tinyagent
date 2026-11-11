@@ -111,7 +111,7 @@ export {
   MAX_TOOL_OUTPUT_BYTES,
 } from "./protocol.ts";
 
-export const VERSION = "0.0.1";
+export const VERSION = "0.2.0";
 
 const INSTRUCTIONS = `You are TinyAgent, a coding agent in the current directory.
 Inspect before changing files. Use bash for shell and file work. Each call is a fresh process.`;

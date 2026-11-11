@@ -1,0 +1,809 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>HTML Builder · TinyAgent</title>
+<link rel="icon" href="data:,">
+<style nonce="__NONCE__">
+  :root {
+    --paper: #f5f3ee; --surface: #fdfcf9; --sunk: #edeae2; --ink: #1c1b19; --soft: #6b665d; --faint: #9c968a;
+    --line: #dcd8cc; --accent: #a8480c; --accent-ink: #fff; --ok: #2c6e49; --bad: #b3261e; --warn: #9a6700;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #131311; --surface: #1a1a17; --sunk: #0e0e0c; --ink: #ebe7de; --soft: #a39d91; --faint: #6f6a60;
+      --line: #2d2b26; --accent: #f0a050; --accent-ink: #1c1206; --ok: #6fc08c; --bad: #ff8a80; --warn: #e3b341;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #131311; --surface: #1a1a17; --sunk: #0e0e0c; --ink: #ebe7de; --soft: #a39d91; --faint: #6f6a60;
+    --line: #2d2b26; --accent: #f0a050; --accent-ink: #1c1206; --ok: #6fc08c; --bad: #ff8a80; --warn: #e3b341;
+  }
+  :root[data-theme="dark"] { color-scheme: dark; }
+  :root[data-theme="light"] { color-scheme: light; }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 14px/1.5 var(--sans); display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr); overflow: hidden; -webkit-font-smoothing: antialiased; }
+  button, select, input, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  button:disabled { cursor: not-allowed; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  [hidden] { display: none !important; }
+
+  /* ---- Top bar ---- */
+  .bar { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; padding: 9px 16px; border-bottom: 1px solid var(--line); }
+  .mark { display: flex; align-items: baseline; gap: 9px; margin-right: auto; white-space: nowrap; }
+  .mark b { font: 600 15px/1 var(--serif); letter-spacing: -0.01em; }
+  .mark span { font: 11px/1 var(--mono); color: var(--faint); }
+  .badge { font: 11px/1 var(--mono); color: var(--warn); border: 1px solid currentColor; border-radius: 99px; padding: 4px 9px; white-space: nowrap; }
+  .controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .field { height: 30px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); padding: 0 8px; font-size: 13px; }
+  select.field { padding-right: 4px; max-width: 190px; }
+  input.field { width: 150px; font-family: var(--mono); font-size: 12px; }
+  .field:disabled { color: var(--faint); background: transparent; }
+  .btn { height: 30px; padding: 0 11px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); font-size: 13px; white-space: nowrap; }
+  .btn:hover:not(:disabled) { border-color: var(--faint); }
+  .btn:disabled { color: var(--faint); background: transparent; }
+  .btn.kill { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); font-weight: 600; }
+  .btn.kill:hover:not(:disabled) { background: var(--bad); color: var(--surface); border-color: var(--bad); }
+  .btn.kill:disabled { color: var(--faint); border-color: var(--line); font-weight: 400; }
+
+  /* ---- Status strip: the connection, then what happened to the current run ---- */
+  .strip { display: flex; align-items: center; gap: 12px; height: 34px; padding: 0 16px; border-bottom: 1px solid var(--line);
+    background: var(--sunk); font: 11.5px/1 var(--mono); overflow: hidden; }
+  .conn { display: flex; align-items: center; gap: 7px; white-space: nowrap; color: var(--soft); flex: none; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: none; }
+  .conn[data-state="down"] { color: var(--bad); }
+  .conn[data-state="down"] .dot { background: var(--bad); animation: blink 0.9s steps(2, start) infinite; }
+  .steps { display: flex; align-items: center; gap: 0; margin: 0; padding: 0; list-style: none; overflow-x: auto; scrollbar-width: none; flex: 1; min-width: 0; }
+  .steps::-webkit-scrollbar { display: none; }
+  .steps li { display: flex; align-items: center; gap: 6px; white-space: nowrap; color: var(--ink); animation: arrive 0.25s ease-out; }
+  .steps li + li::before { content: ""; width: 10px; height: 1px; background: var(--faint); margin: 0 6px; }
+  .steps i { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); flex: none; }
+  .steps em { font-style: normal; color: var(--soft); }
+  .steps li[data-kind="down"] { color: var(--bad); } .steps li[data-kind="down"] i { background: var(--bad); }
+  .steps li[data-kind="up"] i, .steps li[data-kind="resume"] i, .steps li[data-kind="done"] i { background: var(--ok); }
+  .steps li[data-kind="rerun"] i, .steps li[data-kind="start"] i { background: var(--accent); }
+  .steps li[data-kind="fail"] { color: var(--bad); } .steps li[data-kind="fail"] i { background: var(--bad); }
+  .strip .hint { color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* ---- Panes ---- */
+  .panes { display: grid; grid-template-columns: minmax(330px, 440px) minmax(0, 1fr); min-height: 0; }
+  .chat { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; border-right: 1px solid var(--line); background: var(--surface); }
+  .log { overflow-y: auto; padding: 14px 16px 18px 8px; overflow-anchor: none; scrollbar-gutter: stable; }
+
+  .empty { padding: 28px 8px 8px 20px; max-width: 400px; }
+  .empty h1 { font: 500 27px/1.12 var(--serif); letter-spacing: -0.015em; margin: 0 0 10px; }
+  .empty p { margin: 0 0 12px; color: var(--soft); }
+  .empty .scripted { border-left: 2px solid var(--warn); padding: 1px 0 1px 11px; font-size: 13px; }
+  .empty h2 { font: 11px/1 var(--mono); color: var(--faint); text-transform: uppercase; letter-spacing: 0.09em; margin: 22px 0 8px; }
+  .empty button { display: block; width: 100%; text-align: left; background: none; border: 0; border-top: 1px solid var(--line);
+    padding: 10px 2px; font: 15px/1.35 var(--serif); }
+  .empty button:last-child { border-bottom: 1px solid var(--line); }
+  .empty button:hover { color: var(--accent); }
+
+  /* A run reads like a ledger: the journal record number in the margin, the entry beside it. */
+  .run { padding: 4px 0 12px; }
+  .run + .run { border-top: 1px solid var(--line); padding-top: 12px; }
+  .row { display: grid; grid-template-columns: 34px minmax(0, 1fr); column-gap: 12px; padding: 3px 0; }
+  .gut { font: 10.5px/21px var(--mono); color: var(--faint); text-align: right; font-variant-numeric: tabular-nums; user-select: none; }
+  .row.user .body { font-weight: 600; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .row.user img { display: block; max-width: 120px; max-height: 90px; border-radius: 4px; border: 1px solid var(--line); margin-top: 6px; }
+  .row.say .body { font: 15.5px/1.5 var(--serif); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .row.tool .body, .row.end .body, .row.note .body, .row.live .body { font: 12px/21px var(--mono); display: flex; align-items: center; gap: 8px; min-width: 0; height: 21px; }
+  .row.tool .name { color: var(--soft); flex: none; }
+  .row.tool .what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .row.tool .ver { color: var(--accent); flex: none; }
+  .tag { font-size: 10.5px; line-height: 15px; border: 1px solid currentColor; border-radius: 3px; padding: 0 5px; flex: none; }
+  .tag.rerun { color: var(--accent); } .tag.cut { color: var(--bad); }
+  .glyph { width: 12px; height: 12px; flex: none; display: grid; place-items: center; font-size: 12px; line-height: 1; }
+  .row.tool[data-state="running"] .glyph::before { content: ""; width: 9px; height: 9px; border: 1.5px solid var(--faint); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+  .row.tool[data-state="done"] .glyph::before { content: "✓"; color: var(--ok); }
+  .row.tool[data-state="error"] .glyph::before { content: "×"; color: var(--bad); }
+  .row.tool[data-state="cut"] .glyph::before { content: "–"; color: var(--bad); }
+  .row.end .body { color: var(--faint); }
+  .row.end[data-status="failed"] .body, .row.note[data-kind="down"] .body { color: var(--bad); }
+  .row.note[data-kind="up"] .body, .row.note[data-kind="resume"] .body { color: var(--ok); }
+  .row.note .body::after { content: ""; flex: 1; height: 1px; background: currentColor; opacity: 0.3; }
+  .row.live .body { color: var(--soft); }
+  .pulse { display: inline-flex; gap: 3px; }
+  .pulse i { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+  .pulse i:nth-child(2) { animation-delay: 0.15s; } .pulse i:nth-child(3) { animation-delay: 0.3s; }
+  .row.live[data-state="down"] .pulse i { background: var(--bad); animation: none; }
+
+  /* ---- Composer ---- */
+  .composer { border-top: 1px solid var(--line); padding: 10px 12px 12px; display: grid; gap: 8px; }
+  .attached { display: flex; align-items: center; gap: 8px; font: 11.5px var(--mono); color: var(--soft); }
+  .attached img { width: 40px; height: 40px; object-fit: cover; border-radius: 4px; border: 1px solid var(--line); }
+  .attached button { border: 0; background: none; color: var(--soft); text-decoration: underline; padding: 0; font: inherit; }
+  .inputrow { display: flex; align-items: flex-end; gap: 8px; }
+  .composer textarea { flex: 1; min-width: 0; resize: none; height: 40px; max-height: 168px; padding: 9px 11px; border: 1px solid var(--line);
+    border-radius: 8px; background: var(--paper); line-height: 20px; font-size: 14px; }
+  .composer textarea:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .composer textarea::placeholder { color: var(--faint); }
+  .icon { width: 40px; height: 40px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); display: grid; place-items: center; flex: none; padding: 0; }
+  .icon:hover:not(:disabled) { border-color: var(--faint); }
+  .icon:disabled { color: var(--faint); }
+  .icon.send { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .icon.send:disabled { background: transparent; border-color: var(--line); color: var(--faint); }
+  .icon svg { width: 17px; height: 17px; }
+  .keys { font: 10.5px var(--mono); color: var(--faint); display: flex; justify-content: space-between; gap: 8px; }
+
+  /* ---- Preview ---- */
+  .preview { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; min-width: 0; }
+  .vbar { display: flex; align-items: center; gap: 12px; height: 44px; padding: 0 14px; border-bottom: 1px solid var(--line); min-width: 0; }
+  .tabs { display: flex; gap: 2px; flex: none; max-width: 50%; overflow-x: auto; scrollbar-width: none; padding: 2px; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs button { height: 26px; min-width: 34px; padding: 0 8px; border: 1px solid transparent; border-radius: 5px; background: none; font: 12px var(--mono); color: var(--soft); }
+  .tabs button:hover { color: var(--ink); }
+  .tabs button[aria-pressed="true"] { background: var(--surface); border-color: var(--line); color: var(--ink); }
+  .tabs button.twice::after { content: "²"; color: var(--accent); }
+  .vmeta { min-width: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+  .vmeta b { font-weight: 600; } .vmeta span { color: var(--soft); }
+  .vbar .tag { font: 10.5px/15px var(--mono); }
+  .vbar a { font: 12px var(--mono); color: var(--soft); flex: none; }
+  .stage { position: relative; margin: 14px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; min-height: 0; }
+  .stage iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
+  .blank { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; gap: 6px; background: var(--paper); color: var(--faint);
+    background-image: linear-gradient(var(--line) 1px, transparent 1px); background-size: 100% 28px; }
+  .blank b { font: 500 17px var(--serif); color: var(--soft); background: var(--paper); padding: 0 12px; }
+  .blank span { font: 11.5px var(--mono); background: var(--paper); padding: 0 12px; }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes blink { to { opacity: 0.25; } }
+  @keyframes pulse { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
+  @keyframes arrive { from { opacity: 0; transform: translateX(-4px); } }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; } }
+
+  @media (max-width: 820px) {
+    .panes { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 11fr) minmax(0, 9fr); }
+    .chat { border-right: 0; border-bottom: 1px solid var(--line); }
+    .mark span, .keys, .strip .hint { display: none; }
+    .stage { margin: 8px; }
+    input.field { width: 120px; }
+    .empty { padding-top: 12px; }
+    .empty h1 { font-size: 22px; }
+  }
+</style>
+</head>
+<body>
+<header class="bar">
+  <div class="mark"><b>HTML Builder</b><span>a TinyAgent demo</span></div>
+  <span class="badge" id="badge" hidden></span>
+  <div class="controls">
+    <select class="field" id="provider" aria-label="Model provider"></select>
+    <input class="field" id="model" aria-label="Model name" list="models" spellcheck="false" autocomplete="off">
+    <datalist id="models"></datalist>
+    <button class="btn" id="theme" type="button" title="Switch between automatic, light and dark">Auto</button>
+    <button class="btn" id="fresh" type="button" title="Start a new session. The old one stays on disk.">New</button>
+    <button class="btn kill" id="kill" type="button" disabled>Kill server</button>
+  </div>
+</header>
+
+<div class="strip" role="status">
+  <div class="conn" id="conn" data-state="up"><span class="dot"></span><span id="connText">Connecting</span></div>
+  <ol class="steps" id="steps" aria-label="What happened to the current run"></ol>
+  <span class="hint" id="hint"></span>
+</div>
+
+<main class="panes">
+  <section class="chat" aria-label="Conversation">
+    <div class="log" id="log" tabindex="0">
+      <div class="empty" id="empty">
+        <h1>Describe a page.<br>Then try to lose it.</h1>
+        <p>The agent publishes the page as numbered versions, shown on the right. Every step is written to a journal on disk first, so a build that is cut off by a crash picks up where it stopped.</p>
+        <p class="scripted" id="scriptedNote" hidden></p>
+        <h2>Start from an example</h2>
+        <button type="button">A landing page for three rental cabins on a tidal inlet, with a nightly price calculator.</button>
+        <button type="button">A pricing page with three plans and a monthly or yearly toggle.</button>
+        <button type="button">A one-day conference schedule with two tracks and a filter for each.</button>
+      </div>
+    </div>
+    <form class="composer" id="composer">
+      <div class="attached" id="attached" hidden><img id="thumb" alt="Attached reference image"><span id="attachedText"></span><button type="button" id="detach">remove</button></div>
+      <div class="inputrow">
+        <button class="icon" id="attach" type="button" title="Attach a reference image" aria-label="Attach a reference image">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="14" height="12" rx="2"/><circle cx="7.5" cy="8.5" r="1.3"/><path d="m4 14 4-3.5 3 2.5 2.5-2 3.5 3"/></svg>
+        </button>
+        <textarea id="prompt" rows="1" placeholder="Describe a page, or a change" aria-label="Prompt"></textarea>
+        <button class="icon" id="stop" type="button" title="Stop this run" aria-label="Stop this run" hidden>
+          <svg viewBox="0 0 20 20" fill="currentColor"><rect x="6" y="6" width="8" height="8" rx="1.5"/></svg>
+        </button>
+        <button class="icon send" id="send" type="submit" title="Send" aria-label="Send" disabled>
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 16V4M5 9l5-5 5 5"/></svg>
+        </button>
+      </div>
+      <div class="keys"><span>Enter to send · Shift+Enter for a new line</span><span id="sessionLabel"></span></div>
+      <input type="file" id="file" accept="image/*" hidden>
+    </form>
+  </section>
+
+  <section class="preview" aria-label="Preview">
+    <div class="vbar">
+      <div class="tabs" id="tabs" role="group" aria-label="Versions"></div>
+      <div class="vmeta" id="vmeta"><span>No version published yet</span></div>
+      <span class="tag rerun" id="twice" hidden title="This publish ran twice: once before the crash and once after, with the same execution id. The second run overwrote the first, so there is one version, not two.">written 2×, stored once</span>
+      <a id="open" href="#" target="_blank" rel="noopener noreferrer" hidden>open ↗</a>
+    </div>
+    <div class="stage">
+      <!-- Model output. Scripts may run; the page gets an origin of its own and cannot reach this one. -->
+      <iframe id="frame" sandbox="allow-scripts" title="Preview of the selected version" referrerpolicy="no-referrer" hidden></iframe>
+      <div class="blank" id="blank"><b>Nothing published yet</b><span>versions appear here as the agent publishes them</span></div>
+    </div>
+  </section>
+</main>
+
+<script nonce="__NONCE__">
+"use strict";
+const $ = (id) => document.getElementById(id);
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+const el = (tag, className, text) => {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+};
+const saved = {
+  get(key) { try { return localStorage.getItem(`html-builder.${key}`); } catch { return null; } },
+  set(key, value) { try { value === null ? localStorage.removeItem(`html-builder.${key}`) : localStorage.setItem(`html-builder.${key}`, value); } catch { /* private mode */ } },
+};
+
+const state = {
+  config: null,          // what /demo/config last said
+  sid: saved.get("session"),
+  cursor: 0,             // the journal record behind the newest event shown. Everything at or below it is on screen.
+  run: null,             // the run on screen that has not ended: { id, node, live, tools, liveRow, started }
+  prompts: new Map(),    // journal sequence of a run's first record -> what the user sent
+  pending: null,         // a prompt sent but not yet seen as a run: { messageId, message, row }
+  versions: [],
+  pinned: null,          // a version number the user chose; null follows the newest
+  shown: "",             // which version file the iframe holds
+  image: null,           // { mediaType, data, url }
+  following: false,
+  again: false,
+  recovering: false,
+  sending: false,
+};
+
+// ---------- Talking to the server ----------
+
+const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body ?? {}) });
+const ping = async () => { try { const reply = await fetch("/demo/config"); return reply.ok ? await reply.json() : null; } catch { return null; } };
+
+/** One JSON object per line, as the SDK streams them. */
+async function* lines(response) {
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) return;
+    buffer += value;
+    for (let end; (end = buffer.indexOf("\n")) >= 0; buffer = buffer.slice(end + 1)) {
+      const line = buffer.slice(0, end);
+      if (line) yield JSON.parse(line);
+    }
+  }
+}
+
+/**
+ * Resolve once the server answers. If it does not answer, say so and keep
+ * asking. If it answers as a different process, the SDK server has forgotten
+ * which sessions were open, so open ours again from its journal.
+ */
+let waiting = null;
+function server() {
+  return waiting ??= (async () => {
+    let config = await ping();
+    const before = state.config;
+    if (!config) {
+      const since = Date.now();
+      setConn("down", "Server is not answering");
+      step("down", "Server died", `at record ${state.cursor}`);
+      note("down", `connection lost after record ${state.cursor}`);
+      while (!(config = await ping())) await sleep(300);
+      step("up", "Reconnected", `after ${((Date.now() - since) / 1000).toFixed(1)} s`);
+      note("up", `server is back as pid ${config.pid}`);
+    } else if (before && before.bootId !== config.bootId) {
+      step("down", "Server restarted", `at record ${state.cursor}`);
+      step("up", "Reconnected", `pid ${config.pid}`);
+      note("up", `server restarted as pid ${config.pid}`);
+    }
+    applyConfig(config);
+    setConn("up", `Up · pid ${config.pid}`);
+    if (state.sid) await openSession();
+  })().finally(() => { waiting = null; });
+}
+
+/** Ask the server to open our session from its journal. True when it is open afterwards. */
+async function openSession(force) {
+  // Remembering which server process we opened it in saves asking twice: a second request would be refused as busy.
+  if (!force && saved.get("opened") === `${state.sid}@${state.config?.bootId}`) return true;
+  const opened = () => { saved.set("opened", `${state.sid}@${state.config?.bootId}`); return true; };
+  try {
+    const reply = await post("/sessions", { sessionId: state.sid });
+    if (reply.status === 201) return opened();
+    const code = (await reply.json()).error?.code;
+    if (code === "session_busy") return opened();        // already open in this server
+    if (reply.status === 404) forget();                  // its journal is gone
+  } catch { /* the server went away again; the caller retries */ }
+  return false;
+}
+
+/**
+ * Show a session's events from the last record on screen onwards: first what
+ * the journal holds, then, if a run is active, its live events until it ends.
+ */
+async function follow() {
+  if (!state.sid) return;
+  if (state.following) { state.again = true; return; }   // the stream that is ending is followed by a new one
+  state.following = true;
+  dropLiveText();
+  let seen = 0;
+  try {
+    const reply = await fetch(`/sessions/${state.sid}/events?after=${state.cursor}&follow=1`);
+    if (reply.ok) for await (const event of lines(reply)) { seen += 1; show(event); }
+  } catch { /* the connection broke; what to do next is decided below */ }
+  state.following = false;
+  refresh();
+  if (state.again) { state.again = false; return follow(); }
+  // The stream is over but the run on screen never ended: the server died, or the
+  // journal holds a run some earlier crash interrupted. Either way, pick it up.
+  if (state.run?.id) {
+    if (!seen) await sleep(400);
+    recover();
+  }
+}
+
+async function recover() {
+  if (state.recovering) return;
+  state.recovering = true;
+  try {
+    for (;;) {
+      await server();
+      if (!state.sid) return;
+      if (!(await openSession())) { if (!state.sid) return; await sleep(400); continue; }
+      let info;
+      try { info = await (await fetch(`/sessions/${state.sid}?limit=1`)).json(); } catch { continue; }
+      if (info.error) { await openSession(true); await sleep(400); continue; }
+      if (info.resumable) {
+        // The journal has a run that started and never finished. Continue it, detached, and go back to following.
+        step("resume", "Resumed", `at record ${state.cursor}`);
+        note("resume", `run resumed at record ${state.cursor}`);
+        const reply = await post(`/sessions/${state.sid}/resume`, { detach: true }).catch(() => null);
+        if (!reply) continue;
+        reply.body?.cancel().catch(() => {});
+      } else if (state.pending) {
+        // The prompt never reached the journal. Its messageId makes sending it again safe.
+        const reply = await post(`/sessions/${state.sid}/prompts`, { ...state.pending.send, detach: true }).catch(() => null);
+        if (!reply) continue;
+        reply.body?.cancel().catch(() => {});
+      }
+      break;
+    }
+  } finally {
+    state.recovering = false;
+  }
+  follow();
+}
+
+async function send(text) {
+  if (busy() || (!text && !state.image)) return;
+  state.sending = true;
+  refresh();
+  const message = state.image
+    ? [{ type: "text", text: text || "Make it look like this." }, { type: "image", mediaType: state.image.mediaType, data: state.image.data }]
+    : text;
+  $("empty").hidden = true;
+  $("steps").replaceChildren();
+  const run = startRun(null);
+  state.pending = { send: { message, messageId: crypto.randomUUID() }, message, run };
+  fillPrompt(run, message);
+  attach(null);
+  try {
+    if (!state.sid) {
+      const created = await (await post("/sessions")).json();
+      state.sid = created.sessionId;
+      saved.set("session", state.sid);
+      saved.set("opened", `${state.sid}@${state.config.bootId}`);
+    }
+    // Detached: the run belongs to the server, not to this request. We drop the response and follow the journal instead.
+    let reply = await post(`/sessions/${state.sid}/prompts`, { ...state.pending.send, detach: true });
+    if (reply.status === 404 && await openSession(true))
+      reply = await post(`/sessions/${state.sid}/prompts`, { ...state.pending.send, detach: true });
+    if (!reply.ok) {
+      const problem = (await reply.json().catch(() => ({}))).error;
+      endRun(run, "failed", problem?.message ?? `The server answered ${reply.status}`);
+      state.pending = null;
+      return;
+    }
+    reply.body?.cancel().catch(() => {});
+    follow();
+  } catch {
+    recover();   // the server went away under the request
+  } finally {
+    state.sending = false;
+    refresh();
+  }
+}
+
+// ---------- Events to screen ----------
+
+function show(event) {
+  if (event.cursor !== undefined) {
+    // An event with a cursor has a journal record behind it. One at or below ours is already on screen.
+    if (event.cursor <= state.cursor) return;
+    state.cursor = event.cursor;
+    if (state.run) state.run.live = null;   // text shown so far is covered by the journal now
+  }
+  if (event.type === "agent_start") {
+    const run = state.pending?.run ?? startRun(event.cursor);
+    if (!state.pending) fillPrompt(run, state.prompts.get(event.cursor) ?? "");
+    run.id = event.runId;
+    run.node.querySelector(".gut").textContent = event.cursor ?? "";
+    state.pending = null;
+    if (!$("steps").childElementCount || $("steps").dataset.run !== event.runId) $("steps").replaceChildren();
+    $("steps").dataset.run = event.runId;
+    step("start", "Run started", `record ${event.cursor}`);
+    return;
+  }
+  const run = state.run ?? startRun(null);
+  if (event.type === "text_delta") {
+    if (event.cursor !== undefined) row(run, "say", event.delta, event.cursor);
+    else {
+      run.live ??= row(run, "say", "").querySelector(".body");
+      run.live.append(event.delta);
+    }
+  } else if (event.type === "tool_execution_start") {
+    let tool = run.tools.get(event.toolCallId);
+    if (!tool) {
+      tool = row(run, "tool", undefined, event.cursor);
+      tool.querySelector(".body").append(el("span", "glyph"), el("span", "name", event.toolName),
+        el("span", "what", event.arguments?.title ? `“${event.arguments.title}”` : ""), el("span", "ver"));
+      tool.dataset.execution = event.executionId;
+      run.tools.set(event.toolCallId, tool);
+    }
+    tool.dataset.state = "running";
+    tool.querySelector(".tag.cut")?.remove();
+    if (event.rerun) {
+      // Same call, same executionId, run a second time because the first never reported back.
+      tool.querySelector(".tag.rerun")?.remove();
+      tool.querySelector(".body").append(el("span", "tag rerun", "re-run"));
+      tool.querySelector(".tag.rerun").title = `Run again after the crash as journal record ${event.cursor}, with the same execution id: ${event.executionId}`;
+      step("rerun", "Publish re-run", `record ${event.cursor}`);
+    }
+  } else if (event.type === "tool_execution_end") {
+    const tool = run.tools.get(event.toolCallId);
+    if (tool) tool.dataset.state = event.isError ? "error" : "done";
+    if (tool && event.isError) tool.querySelector(".what").textContent = String(event.output).slice(0, 200);
+    loadVersions();
+  } else if (event.type === "agent_end") {
+    endRun(run, event.status, event.error?.message, event.cursor);
+    step(event.status === "completed" ? "done" : "fail", event.status === "completed" ? "Finished" : `Run ${event.status}`, `record ${event.cursor ?? state.cursor}`);
+    loadVersions();
+  }
+  stick();
+}
+
+function startRun(cursor) {
+  const node = el("article", "run");
+  const run = { id: null, node, live: null, tools: new Map(), started: Date.now(), liveRow: null };
+  node.append(rowNode("user", "", cursor));
+  run.liveRow = rowNode("live", undefined, undefined);
+  run.liveRow.querySelector(".body").append(pulse(), el("span", "", "working"));
+  node.append(run.liveRow);
+  $("log").append(node);
+  $("empty").hidden = true;
+  state.run = run;
+  refresh();
+  stick(true);
+  return run;
+}
+
+function fillPrompt(run, message) {
+  const body = run.node.querySelector(".row.user .body");
+  const parts = typeof message === "string" ? [{ type: "text", text: message }] : message;
+  body.replaceChildren();
+  for (const part of parts) {
+    if (part.type === "text") body.append(part.text);
+    else if (part.data) { const image = el("img"); image.alt = "Reference image"; image.src = `data:${part.mediaType};base64,${part.data}`; body.append(image); }
+  }
+}
+
+function endRun(run, status, message, cursor) {
+  run.live = null;
+  run.liveRow.remove();
+  for (const tool of run.tools.values()) if (tool.dataset.state === "running") tool.dataset.state = "cut";
+  const end = row(run, "end", status === "completed" ? "completed" : `${status}${message ? `: ${message}` : ""}`, cursor);
+  end.dataset.status = status;
+  if (state.run === run) state.run = null;
+  refresh();
+  stick();
+}
+
+function rowNode(kind, text, cursor) {
+  const node = el("div", `row ${kind}`);
+  node.append(el("span", "gut", cursor ?? ""), el("div", "body", text));
+  return node;
+}
+function row(run, kind, text, cursor) {
+  const node = rowNode(kind, text, cursor);
+  run.node.insertBefore(node, run.liveRow.isConnected ? run.liveRow : null);
+  return node;
+}
+function pulse() { const node = el("span", "pulse"); node.append(el("i"), el("i"), el("i")); return node; }
+
+/** A line in the conversation about the connection, where it happened. */
+function note(kind, text) {
+  if (!state.run) return;
+  row(state.run, "note", text).dataset.kind = kind;
+  if (kind === "down") {
+    for (const tool of state.run.tools.values()) if (tool.dataset.state === "running") {
+      tool.dataset.state = "cut";
+      tool.querySelector(".body").append(el("span", "tag cut", "in flight"));
+    }
+    state.run.liveRow.dataset.state = "down";
+    state.run.liveRow.querySelector(".body span:last-child").textContent = "waiting for the server";
+  } else if (kind === "resume") {
+    delete state.run.liveRow.dataset.state;
+    state.run.liveRow.querySelector(".body span:last-child").textContent = "working";
+  }
+  stick();
+}
+
+/** Text of a model turn that no journal record covers yet is not kept across a reconnect: the stream sends it again. */
+function dropLiveText() {
+  if (!state.run?.live) return;
+  state.run.live.parentElement.remove();
+  state.run.live = null;
+}
+
+function step(kind, label, detail) {
+  const item = el("li");
+  item.dataset.kind = kind;
+  item.append(el("i"), el("span", "", label), el("em", "", detail));
+  $("steps").append(item);
+  $("steps").scrollLeft = $("steps").scrollWidth;
+  $("hint").hidden = true;
+}
+
+function setConn(stateName, text) {
+  $("conn").dataset.state = stateName;
+  $("connText").textContent = text;
+  refresh();
+}
+
+/** Keep the newest line in view, unless the reader has scrolled up to look at something. */
+let pinnedToEnd = true;
+$("log").addEventListener("scroll", () => { pinnedToEnd = $("log").scrollHeight - $("log").scrollTop - $("log").clientHeight < 60; });
+function stick(force) { if (force || pinnedToEnd) $("log").scrollTop = $("log").scrollHeight; }
+
+// ---------- Versions and the preview ----------
+
+async function loadVersions() {
+  if (!state.sid) return;
+  try {
+    const reply = await fetch(`/demo/designs/${state.sid}`);
+    if (!reply.ok) return;
+    state.versions = (await reply.json()).versions;
+  } catch { return; }
+  renderVersions();
+}
+
+function renderVersions() {
+  const versions = state.versions;
+  const current = versions.find((item) => item.version === state.pinned) ?? versions.at(-1);
+  $("tabs").replaceChildren(...versions.map((item) => {
+    const tab = el("button", item.attempts > 1 ? "twice" : "", `v${item.version}`);
+    tab.type = "button";
+    tab.title = item.title;
+    tab.setAttribute("aria-pressed", String(item === current));
+    tab.addEventListener("click", () => { state.pinned = item === versions.at(-1) ? null : item.version; renderVersions(); });
+    return tab;
+  }));
+  $("frame").hidden = !current;
+  $("blank").hidden = Boolean(current);
+  $("open").hidden = !current;
+  $("twice").hidden = !current || current.attempts < 2;
+  if (!current) {
+    $("vmeta").replaceChildren(el("span", "", "No version published yet"));
+    state.shown = "";
+    return;
+  }
+  $("vmeta").replaceChildren(el("b", "", current.title), el("span", "", ` · ${current.summary} · ${(current.bytes / 1024).toFixed(1)} KB`));
+  $("vmeta").title = current.summary;
+  const address = `/demo/designs/${state.sid}/${current.version}`;
+  $("open").href = address;
+  // Reload the frame only when it would show something else.
+  const key = `${address}#${current.attempts}`;
+  if (state.shown !== key) { state.shown = key; $("frame").src = `${address}?attempt=${current.attempts}`; }
+  // Tell each tool line which version it became.
+  for (const item of versions) for (const tool of document.querySelectorAll(".row.tool")) {
+    if (tool.dataset.execution === item.executionId) tool.querySelector(".ver").textContent = `→ v${item.version}`;
+  }
+}
+
+// ---------- Controls ----------
+
+const busy = () => state.sending || Boolean(state.run) || state.recovering;
+
+function refresh() {
+  const down = $("conn").dataset.state === "down";
+  const running = busy();
+  $("send").disabled = running || down || (!$("prompt").value.trim() && !state.image);
+  $("send").hidden = Boolean(state.run) && !down;
+  $("stop").hidden = !state.run || down;
+  $("attach").disabled = running;
+  $("provider").disabled = $("fresh").disabled = running || down;
+  $("model").disabled = running || down || state.config?.selected.provider === "scripted";
+  $("kill").disabled = down || !state.config?.allowKill;
+  $("sessionLabel").textContent = state.sid ? `session ${state.sid.slice(0, 10)}…` : "";
+}
+
+function applyConfig(config) {
+  state.config = config;
+  const { selected, providers } = config;
+  $("provider").replaceChildren(...providers.map((item) => { const option = el("option", "", item.label); option.value = item.id; return option; }));
+  $("provider").value = selected.provider;
+  if (document.activeElement !== $("model")) $("model").value = selected.model;
+  $("models").replaceChildren(...(providers.find((item) => item.id === selected.provider)?.models ?? []).map((name) => { const option = el("option"); option.value = name; return option; }));
+  const scripted = selected.provider === "scripted";
+  $("badge").hidden = !scripted;
+  $("badge").textContent = config.scriptedOnly ? "Scripted mode · no API key configured" : "Scripted mode";
+  $("scriptedNote").hidden = !scripted;
+  $("scriptedNote").textContent = (config.scriptedOnly
+    ? "No API key is configured, so this is scripted mode: " : "Scripted mode: ") +
+    "a canned three-step build plays for any prompt, with one deliberately slow step. " +
+    (config.scriptedOnly ? "Set OPENAI_API_KEY or ANTHROPIC_API_KEY and restart the server to use a model." : "Pick a provider above to use a model.");
+  $("kill").title = config.allowKill
+    ? "Make the server process exit on the spot, without cleanup. The supervisor starts a new one two seconds later."
+    : "Off. Start the server with --allow-kill to enable it.";
+  if (!$("steps").childElementCount) {
+    $("hint").hidden = false;
+    $("hint").textContent = config.allowKill ? "Send a prompt, then press Kill server while it builds." : "Start with --allow-kill to try the crash, or stop and restart the server by hand mid-run.";
+  }
+  refresh();
+}
+
+async function chooseModel(provider, model) {
+  const reply = await post("/demo/model", { provider, model }).catch(() => null);
+  const config = await ping();
+  if (config) applyConfig(config);
+  if (reply && !reply.ok) $("model").focus();
+}
+$("provider").addEventListener("change", () => {
+  const chosen = state.config.providers.find((item) => item.id === $("provider").value);
+  chooseModel(chosen.id, chosen.models[0] ?? $("model").value ?? "");
+});
+$("model").addEventListener("change", () => chooseModel($("provider").value, $("model").value));
+
+$("kill").addEventListener("click", () => {
+  // The request never gets an answer: the process is gone before it could write one.
+  post("/demo/kill").catch(() => {});
+  setTimeout(() => { if (!state.run) server(); }, 150);
+});
+
+$("stop").addEventListener("click", () => { if (state.sid) post(`/sessions/${state.sid}/cancel`).catch(() => {}); });
+
+function forget() {
+  state.sid = null;
+  saved.set("session", null);
+  Object.assign(state, { cursor: 0, run: null, pending: null, versions: [], pinned: null, shown: "" });
+  state.prompts.clear();
+  for (const node of [...$("log").children]) if (node !== $("empty")) node.remove();
+  $("empty").hidden = false;
+  $("steps").replaceChildren();
+  $("frame").removeAttribute("src");
+  renderVersions();
+  refresh();
+}
+$("fresh").addEventListener("click", () => {
+  // Closing a session on the server releases it and keeps its journal.
+  if (state.sid) fetch(`/sessions/${state.sid}`, { method: "DELETE" }).catch(() => {});
+  forget();
+  $("prompt").focus();
+});
+
+const THEMES = ["auto", "light", "dark"];
+function setTheme(name) {
+  if (name === "auto") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = name;
+  $("theme").textContent = name[0].toUpperCase() + name.slice(1);
+  saved.set("theme", name === "auto" ? null : name);
+}
+$("theme").addEventListener("click", () => setTheme(THEMES[(THEMES.indexOf(saved.get("theme") ?? "auto") + 1) % 3]));
+setTheme(saved.get("theme") ?? "auto");
+
+// The composer: Enter sends, Shift+Enter breaks the line, and the box grows to eight lines.
+const prompt = $("prompt");
+function fit() {
+  prompt.style.height = "40px";
+  prompt.style.height = `${Math.min(168, prompt.scrollHeight + 2)}px`;
+  refresh();
+}
+prompt.addEventListener("input", fit);
+prompt.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); $("composer").requestSubmit(); }
+});
+$("composer").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const text = prompt.value.trim();
+  if (busy() || $("conn").dataset.state === "down" || (!text && !state.image)) return;
+  prompt.value = "";
+  fit();
+  send(text);
+});
+for (const example of $("empty").querySelectorAll("button")) example.addEventListener("click", () => {
+  prompt.value = example.textContent;
+  fit();
+  prompt.focus();
+});
+
+// A reference image is scaled down in the page, so it fits in one request body (the SDK's limit is 1 MB).
+function attach(image) {
+  state.image = image;
+  $("attached").hidden = !image;
+  if (image) {
+    $("thumb").src = image.url;
+    $("attachedText").textContent = `reference image, ${Math.round(image.data.length * 0.75 / 1024)} KB` +
+      (state.config?.selected.provider === "scripted" ? " (the scripted model ignores it)" : "");
+  }
+  refresh();
+}
+async function readImage(file) {
+  if (!file || !file.type.startsWith("image/")) return;
+  const bitmap = await createImageBitmap(file);
+  for (const side of [1280, 960, 640]) {
+    const scale = Math.min(1, side / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const url = canvas.toDataURL("image/jpeg", 0.82);
+    if (url.length < 700_000 || side === 640) return attach({ mediaType: "image/jpeg", data: url.slice(url.indexOf(",") + 1), url });
+  }
+}
+$("attach").addEventListener("click", () => $("file").click());
+$("file").addEventListener("change", () => { readImage($("file").files[0]); $("file").value = ""; });
+$("detach").addEventListener("click", () => attach(null));
+prompt.addEventListener("paste", (event) => {
+  const file = [...event.clipboardData.files].find((item) => item.type.startsWith("image/"));
+  if (file) { event.preventDefault(); readImage(file); }
+});
+
+// ---------- Start ----------
+
+/** The events endpoint does not carry what the user sent, so read each run's prompt from the journal records. */
+async function loadPrompts() {
+  for (let offset = 0; offset !== null;) {
+    const page = await (await fetch(`/sessions/${state.sid}?view=records&offset=${offset}&limit=200`)).json();
+    for (const record of page.records ?? []) if (record.type === "run_start") state.prompts.set(record.sequence, record.item.content);
+    offset = page.nextOffset ?? null;
+  }
+}
+
+async function boot() {
+  await server();
+  if (state.sid) {
+    try { await loadPrompts(); } catch { /* shown without prompts */ }
+    await loadVersions();
+    follow();   // replays the whole session, joins a run if one is active, resumes one if it was interrupted
+  }
+  prompt.focus();
+  // Notice a server that was stopped or restarted while nothing was running.
+  setInterval(() => { if (!state.recovering && !state.following) server(); }, 2000);
+  setInterval(() => {
+    const label = state.run?.liveRow.querySelector(".body span:last-child");
+    if (label && !state.run.liveRow.dataset.state) label.textContent = `working · ${Math.round((Date.now() - state.run.started) / 1000)} s`;
+  }, 1000);
+}
+boot();
+</script>
+</body>
+</html>

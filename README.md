@@ -60,7 +60,7 @@ RPC and HTTP, with sessions in memory.
 | [TypeScript](tinyagents/typescript/README.md) | 2 | Supported. 214 unit tests, verified on Node.js 22.18, 24 and 26. Passes the black-box harness. |
 | [Go](tinyagents/go/README.md), [Rust](tinyagents/rust/README.md), [Zig](tinyagents/zig/README.md), [C#](tinyagents/csharp/README.md), [Java](tinyagents/java/README.md), [PHP](tinyagents/php/README.md), [Elixir](tinyagents/elixir/README.md) | 1 | Experimental reference implementations, in memory only. Not in CI, last verified on macOS in September 2026. |
 
-Version 0.0.1. Nothing is published to PyPI or npm yet; install from a clone.
+Version 0.2.0. Nothing is published to PyPI or npm yet; install from a clone.
 Windows is untested. [STATUS.md](STATUS.md) says what is verified, what is
 not, and what comes next.
 
@@ -119,10 +119,10 @@ Node.js 22.18 or newer, which runs `.ts` files directly.
 git clone https://github.com/superuserkalo/tinyagent.git
 cd tinyagent/tinyagents/typescript
 npm ci --ignore-scripts
-npm pack                      # builds dist/ and writes tiny-agent-sdk-0.0.1.tgz
+npm pack                      # builds dist/ and writes tiny-agent-sdk-0.2.0.tgz
 
 cd /path/to/your/project      # a project with "type": "module"
-npm install /path/to/tinyagent/tinyagents/typescript/tiny-agent-sdk-0.0.1.tgz
+npm install /path/to/tinyagent/tinyagents/typescript/tiny-agent-sdk-0.2.0.tgz
 export OPENAI_API_KEY="..."
 ```
 
@@ -233,10 +233,23 @@ approval: they run with the blacklist only.
 rules, the journal, resume, events, commands, routes, error codes, limits and
 the invariants every implementation must uphold.
 
+## Demo: a durable HTML builder
+
+[`examples/html-builder`](examples/html-builder) is a small web app on the
+TypeScript SDK: describe a page, watch the agent publish it version by
+version, kill the server mid-build, and it resumes from its journal. It runs
+offline with a scripted model, or with your own API key.
+
+```sh
+cd tinyagents/typescript && npm ci --ignore-scripts
+cd ../../examples/html-builder && node server.ts --allow-kill    # http://127.0.0.1:4380
+```
+
 ## Repository layout
 
 ```text
 tinyagents/<language>/   one native implementation each
+examples/html-builder/   the demo web app above
 PROTOCOL.md              the contract, protocol version 2
 conformance/             shared fixtures, the runner, and the black-box harness
 sdk/README.md            reference for the version 1 in-memory core across languages

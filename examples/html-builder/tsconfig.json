@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023", "DOM"],
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "types": ["node"],
+    "typeRoots": ["../../tinyagents/typescript/node_modules/@types"]
+  },
+  "include": ["server.ts", "kill_resume.test.ts"]
+}

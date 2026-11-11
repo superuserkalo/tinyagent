@@ -28,10 +28,10 @@ build the package from a clone and install the tarball:
 git clone https://github.com/superuserkalo/tinyagent.git
 cd tinyagent/tinyagents/typescript
 npm ci --ignore-scripts
-npm pack                      # builds dist/ and writes tiny-agent-sdk-0.0.1.tgz
+npm pack                      # builds dist/ and writes tiny-agent-sdk-0.2.0.tgz
 
 cd /path/to/your/project      # a project with "type": "module"
-npm install /path/to/tinyagent/tinyagents/typescript/tiny-agent-sdk-0.0.1.tgz
+npm install /path/to/tinyagent/tinyagents/typescript/tiny-agent-sdk-0.2.0.tgz
 ```
 
 Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` before running an agent. Keys are
